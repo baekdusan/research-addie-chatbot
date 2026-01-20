@@ -1,0 +1,14 @@
+{
+  "flutter": {
+    "platforms": {
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "research-addie-chatbot",
+          "configurations": {
+            "web": "1:1056336670829:web:9eaf40cf41188019184f64"
+          }
+        }
+      }
+    }
+  }
+}
