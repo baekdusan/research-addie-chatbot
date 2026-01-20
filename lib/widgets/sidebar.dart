@@ -2,7 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/chat_provider.dart';
 
-/// 세션 목록을 표시하고 새 세션을 만들 수 있게 한다.
+/// 채팅 세션 목록과 새 채팅 버튼을 제공하는 사이드바 위젯.
+///
+/// [chatSessionsProvider]를 구독하여 세션 목록을 표시하고,
+/// [activeSessionIdProvider]로 현재 선택된 세션을 하이라이트한다.
+/// "New Chat" 버튼 클릭 시 [ChatController.createNewSession]을 호출하고,
+/// 세션 항목 클릭 시 해당 세션을 활성화한다.
+///
+/// 데스크탑에서는 화면 왼쪽에 고정 표시되고, 모바일에서는 [Drawer] 내부에 표시된다.
 class Sidebar extends ConsumerWidget {
   const Sidebar({super.key});
 

@@ -1,7 +1,10 @@
 import 'package:uuid/uuid.dart';
 import 'message.dart';
 
-/// 메타데이터와 메시지 히스토리를 가진 불변 세션 모델이다.
+/// 하나의 채팅 대화를 표현하는 불변(immutable) 데이터 모델.
+///
+/// 고유 ID, 제목, 메시지 목록([Message]), 생성 시간을 포함하며,
+/// 사이드바의 세션 목록과 [ChatView]에서 대화 내용을 표시하는 데 사용된다.
 class ChatSession {
   final String id;
   final String title;
@@ -17,7 +20,10 @@ class ChatSession {
        messages = messages ?? [],
        createdAt = createdAt ?? DateTime.now();
 
-  /// 불변성을 유지하기 위해 수정된 복사본을 반환한다.
+  /// 불변성 패턴 구현을 위한 복사 메서드.
+  ///
+  /// 메시지 추가, 제목 변경 등 세션 업데이트 시 원본을 수정하지 않고
+  /// 새 [ChatSession] 인스턴스를 생성한다.
   ChatSession copyWith({
     String? id,
     String? title,
@@ -32,7 +38,10 @@ class ChatSession {
     );
   }
 
-  /// 영속화를 위해 세션을 직렬화한다.
+  /// 세션을 JSON [Map]으로 변환하는 직렬화 메서드.
+  ///
+  /// 각 메시지도 재귀적으로 [Message.toJson]을 호출하여 직렬화하며,
+  /// 로컬 저장소에 대화 기록을 저장할 때 사용한다.
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -42,7 +51,10 @@ class ChatSession {
     };
   }
 
-  /// 저장된 JSON에서 세션을 역직렬화한다.
+  /// JSON [Map]에서 [ChatSession] 인스턴스를 복원하는 팩토리 생성자.
+  ///
+  /// 앱 재시작 시 저장된 대화 기록을 불러오는 데 사용한다.
+  /// 내부 메시지 목록도 [Message.fromJson]을 통해 복원된다.
   factory ChatSession.fromJson(Map<String, dynamic> json) {
     return ChatSession(
       id: json['id'],

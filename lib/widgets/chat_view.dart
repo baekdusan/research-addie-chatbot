@@ -5,7 +5,11 @@ import '../providers/chat_provider.dart';
 import 'message_bubble.dart';
 import 'chat_input.dart';
 
-/// 활성 세션의 메시지와 입력 영역을 렌더링한다.
+/// 현재 활성화된 채팅 세션의 메시지 목록과 입력 영역을 렌더링하는 메인 뷰 위젯.
+///
+/// [activeSessionProvider]를 구독하여 메시지가 변경될 때마다 UI를 업데이트한다.
+/// 세션이 없거나 메시지가 비어있으면 환영 화면을 표시하고,
+/// 그렇지 않으면 [MessageBubble] 리스트와 [ChatInput]을 표시한다.
 class ChatView extends ConsumerStatefulWidget {
   const ChatView({super.key});
 
@@ -22,7 +26,10 @@ class _ChatViewState extends ConsumerState<ChatView> {
     super.dispose();
   }
 
-  /// 최신 메시지로 스크롤을 이동한다.
+  /// 메시지 목록을 최하단으로 애니메이션 스크롤한다.
+  ///
+  /// 새 메시지가 추가되거나 스트리밍 중일 때 호출되어
+  /// 사용자가 항상 최신 메시지를 볼 수 있도록 한다.
   void _scrollToBottom() {
     if (_scrollController.hasClients) {
       _scrollController.animateTo(
@@ -37,8 +44,9 @@ class _ChatViewState extends ConsumerState<ChatView> {
   Widget build(BuildContext context) {
     final session = ref.watch(activeSessionProvider);
 
-    // 메시지 목록 변경을 감지해 최신 메시지 또는 스트리밍 중인
-    // 메시지로 자동 스크롤한다.
+    // activeSessionProvider 변경을 감지하여 자동 스크롤을 트리거한다.
+    // 새 메시지가 추가되거나 마지막 메시지가 스트리밍 중이면 하단으로 스크롤한다.
+    // addPostFrameCallback을 사용하여 프레임 렌더링 완료 후 스크롤을 실행한다.
     ref.listen(activeSessionProvider, (previous, next) {
       if (next != null &&
           (previous == null ||

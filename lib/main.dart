@@ -4,14 +4,20 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'screens/chat_screen.dart';
 
-/// 앱 시작점과 Firebase 초기화를 담당한다.
+/// Firebase를 초기화하고 앱을 시작하는 진입점.
+///
+/// [WidgetsFlutterBinding.ensureInitialized]로 Flutter 엔진을 초기화한 뒤,
+/// Firebase 초기화를 완료하고 [ProviderScope]로 감싼 루트 위젯을 실행한다.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const ProviderScope(child: MyApp()));
 }
 
-/// 전역 테마를 설정하는 루트 위젯이다.
+/// 앱의 루트 위젯으로, Material 3 기반의 라이트/다크 테마를 정의한다.
+///
+/// [ChatScreen]을 홈 화면으로 설정하고, [colorScheme]을 통해
+/// 앱 전체의 색상 테마를 일관되게 관리한다.
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 

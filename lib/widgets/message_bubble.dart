@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
 import '../models/message.dart';
 
-/// 단일 메시지를 표시하는 버블 UI다.
+/// 단일 채팅 메시지를 말풍선 형태로 표시하는 위젯.
+///
+/// [Message.role]에 따라 스타일이 달라진다:
+/// - **사용자 메시지**: 오른쪽 정렬, primary 색상 배경, 사람 아이콘
+/// - **AI 메시지**: 왼쪽 정렬, surfaceVariant 색상 배경, 로봇 아이콘
+///
+/// 말풍선 모서리는 발신자 방향의 하단만 각지게 처리하여 대화 흐름을 시각적으로 표현한다.
 class MessageBubble extends StatelessWidget {
   final Message message;
 
