@@ -1,0 +1,131 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:riverpod_annotation/riverpod_annotation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/learning_state.dart';
+import '../models/learner_profile.dart';
+import '../models/instructional_design.dart';
+
+part 'learning_state_provider.g.dart';
+
+const _learningStateStorageKey = 'learning_state_v1';
+
+@riverpod
+class LearningStateNotifier extends _$LearningStateNotifier {
+  @override
+  LearningState build() {
+    final initial = LearningState.initial();
+    unawaited(_loadFromPrefs());
+    return initial;
+  }
+
+  Future<void> updateFromExtractedInfo({
+    String? subject,
+    String? goal,
+    LearnerLevel? level,
+    TonePreference? tonePreference,
+  }) async {
+    final current = state;
+    final normalizedSubject = _normalizeText(subject);
+    final normalizedGoal = _normalizeText(goal);
+    debugPrint(
+      '[State] update subject=$normalizedSubject goal=$normalizedGoal level=${level?.name} tone=${tonePreference?.name}',
+    );
+    final subjectChanged =
+        normalizedSubject != null && normalizedSubject != current.learnerProfile.subject;
+    final goalChanged =
+        normalizedGoal != null && normalizedGoal != current.learnerProfile.goal;
+
+    final updatedProfile = current.learnerProfile.copyWith(
+      subject: normalizedSubject ?? current.learnerProfile.subject,
+      goal: normalizedGoal ?? current.learnerProfile.goal,
+      level: level ?? current.learnerProfile.level,
+      tonePreference: tonePreference ?? current.learnerProfile.tonePreference,
+    );
+
+    final resetDesign =
+        (subjectChanged || goalChanged) && current.instructionalDesign.designFilled;
+    final updatedDesign = resetDesign
+        ? InstructionalDesign.empty()
+        : current.instructionalDesign;
+
+    state = current.copyWith(
+      learnerProfile: updatedProfile,
+      instructionalDesign: updatedDesign,
+      isDesigning: resetDesign ? false : current.isDesigning,
+      showDesignReady: resetDesign ? false : current.showDesignReady,
+      isCourseCompleted: resetDesign ? false : current.isCourseCompleted,
+      updatedAt: DateTime.now(),
+    );
+
+    debugPrint(
+      '[State] flags mandatory=${state.learnerProfile.isMandatoryFilled} designFilled=${state.instructionalDesign.designFilled} designing=${state.isDesigning} completed=${state.isCourseCompleted}',
+    );
+
+    await _saveToPrefs();
+  }
+
+  Future<void> setDesigning(bool value) async {
+    state = state.copyWith(
+      isDesigning: value,
+      showDesignReady: value ? false : state.showDesignReady,
+      updatedAt: DateTime.now(),
+    );
+    await _saveToPrefs();
+  }
+
+  Future<void> setSyllabus(List<Step> syllabus) async {
+    state = state.copyWith(
+      instructionalDesign: state.instructionalDesign.copyWith(
+        syllabus: syllabus,
+      ),
+      isDesigning: false,
+      showDesignReady: true,
+      isCourseCompleted: false,
+      updatedAt: DateTime.now(),
+    );
+    await _saveToPrefs();
+  }
+
+  Future<void> setDesignReady(bool value) async {
+    state = state.copyWith(showDesignReady: value, updatedAt: DateTime.now());
+    await _saveToPrefs();
+  }
+
+  Future<void> markCourseCompleted() async {
+    state = state.copyWith(isCourseCompleted: true, updatedAt: DateTime.now());
+    await _saveToPrefs();
+  }
+
+  Future<void> resetCourseCompleted() async {
+    state = state.copyWith(isCourseCompleted: false, updatedAt: DateTime.now());
+    await _saveToPrefs();
+  }
+
+  Future<void> _loadFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_learningStateStorageKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      state = LearningState.fromJson(data);
+    } catch (_) {
+      // Ignore invalid persisted data
+    }
+  }
+
+  Future<void> _saveToPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final encoded = jsonEncode(state.toJson());
+    await prefs.setString(_learningStateStorageKey, encoded);
+  }
+
+  String? _normalizeText(String? value) {
+    if (value == null) return null;
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return null;
+    if (trimmed.toLowerCase() == 'null') return null;
+    return trimmed;
+  }
+}

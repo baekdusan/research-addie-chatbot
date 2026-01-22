@@ -24,9 +24,11 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Ultrawork Chatbot',
+      title: 'Instructional Tutoring System',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
+        fontFamily: 'Apple SD Gothic Neo',
+        fontFamilyFallback: const ['Malgun Gothic', 'Dotum', 'sans-serif'],
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.blue,
           brightness: Brightness.light,
@@ -34,6 +36,8 @@ class MyApp extends StatelessWidget {
         useMaterial3: true,
       ),
       darkTheme: ThemeData(
+        fontFamily: 'Apple SD Gothic Neo',
+        fontFamilyFallback: const ['Malgun Gothic', 'Dotum', 'sans-serif'],
         colorScheme: ColorScheme.fromSeed(
           seedColor: Colors.blue,
           brightness: Brightness.dark,

@@ -4,16 +4,66 @@ ADDIE 모델 기반 적응형 학습 튜터 시스템
 
 ## 프로젝트 개요
 
-학습자의 니즈를 분석하고, 교수설계안을 생성하며, 대화형으로 수업을 진행하는 AI 튜터 챗봇
+학습자의 니즈를 분석하고, 교수설계안(Syllabus)을 생성하며, 대화형으로 수업을 진행하는 AI 튜터 챗봇입니다.
 
-### 핵심 기능 (계획)
+### 연구 가설
+
+> "어떠한 학습 주제든 ADDIE 프레임워크를 따르면 학습자 맞춤형 대화형 교육이 가능하다"
+
+### 학습 흐름
 
 ```
-[1단계: 니즈 분석] → [2단계: 교수설계안 생성] → [3단계: 대화형 수업]
-     ↓                      ↓                         ↓
-  구조화된 질문          ADDIE 기반 설계           적응형 튜터링
-  학습자 프로파일        학습목표/콘텐츠 구조화      진도 추적 & 피드백
+[1단계: 니즈 분석]    →    [2단계: 교수설계]    →    [3단계: 대화형 수업]
+      ↓                         ↓                         ↓
+  Analyst 모드              Syllabus 생성             Tutor 모드
+  학습자 프로파일 수집       1~5단계 로드맵 자동 생성     스트리밍 튜터링
+                                                      ↓
+                                                 [피드백 반영]
+                                                      ↓
+                                                 Feedback 모드
+                                                 로드맵 재설계
 ```
+
+---
+
+## 핵심 아키텍처: Stateless Micro-Agent Pattern
+
+### 설계 철학
+
+기존의 "Fat Agent" (LLM이 상태를 보고 모든 것을 판단) 방식에서 **"Thin Micro-Services"** (앱이 상태를 보고 판단, LLM은 생성만) 방식으로 전환하여 레이턴시와 비용을 최적화했습니다.
+
+| 항목 | 기존 방식 | 현재 방식 |
+|------|----------|----------|
+| 결정 주체 | LLM이 상태를 보고 판단 | **앱 코드**가 상태를 보고 판단 |
+| LLM 역할 | 사고 + 판단 + 생성 | **생성만** |
+| 상태 관리 | LLM 컨텍스트 내 | **외부 (Riverpod)** |
+| 프롬프트 | 하나의 거대한 프롬프트 | **역할별 작은 프롬프트** |
+| 레이턴시 | ~30초/턴 | **2~5초/턴** |
+
+### 서비스 구성
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    App Orchestrator                         │
+│                  (ChatController + Riverpod)                │
+└─────────────────────────────────────────────────────────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          ↓                   ↓                   ↓
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│ IntentClassifier│ │ Conversational  │ │ SyllabusDesigner│
+│    Service      │ │  AgentService   │ │    Service      │
+├─────────────────┤ ├─────────────────┤ ├─────────────────┤
+│ - 의도 분류     │ │ - Analyst 모드  │ │ - Syllabus 생성 │
+│ - in/out class │ │ - Tutor 모드    │ │ - 1~5단계 구성  │
+│                 │ │ - Feedback 모드 │ │                 │
+└─────────────────┘ └─────────────────┘ └─────────────────┘
+        ↓                   ↓                   ↓
+   gemini-2.0-flash   gemini-2.5-flash   gemini-3-flash-preview
+   (Fast, 분류용)      (Balanced)         (Strong Reasoning)
+```
+
+---
 
 ## 기술 스택
 
@@ -21,30 +71,48 @@ ADDIE 모델 기반 적응형 학습 튜터 시스템
 |------|------|
 | 프론트엔드 | Flutter Web |
 | 상태 관리 | Riverpod (코드 생성) |
-| AI 백엔드 | Firebase AI (Vertex AI) - Gemini 2.0 Flash |
-| 데이터베이스 | Firestore (예정) |
+| AI 백엔드 | Firebase AI (Vertex AI) |
+| 모델 | Gemini 2.0/2.5/3.0 Flash |
+| 로컬 저장소 | SharedPreferences |
+
+---
 
 ## 프로젝트 구조
 
 ```
 lib/
-├── main.dart                 # 앱 진입점
-├── firebase_options.dart     # Firebase 설정
+├── main.dart                      # 앱 진입점
+├── firebase_options.dart          # Firebase 설정
+│
 ├── models/
-│   ├── message.dart          # 메시지 모델
-│   └── chat_session.dart     # 채팅 세션 모델
+│   ├── message.dart               # 채팅 메시지 모델
+│   ├── chat_session.dart          # 채팅 세션 모델
+│   ├── learner_profile.dart       # 학습자 프로파일 (subject, goal, level, tone)
+│   ├── instructional_design.dart  # 교수설계 모델 (Step, Syllabus)
+│   └── learning_state.dart        # 통합 학습 상태
+│
 ├── providers/
-│   └── chat_provider.dart    # Riverpod 프로바이더
+│   ├── chat_provider.dart         # 채팅 + 오케스트레이션 로직
+│   └── learning_state_provider.dart # 학습 상태 관리 + 영속화
+│
 ├── services/
-│   └── gemini_service.dart   # Firebase AI 서비스
+│   ├── gemini_service.dart        # 스트리밍 응답 (Tutor용)
+│   ├── intent_classifier_service.dart  # 의도 분류
+│   ├── conversational_agent_service.dart # Analyst/Tutor/Feedback
+│   ├── syllabus_designer_service.dart   # 커리큘럼 생성
+│   └── step_mapper_service.dart   # 재설계 시 단계 매핑
+│
 ├── screens/
-│   └── chat_screen.dart      # 메인 채팅 화면
+│   └── chat_screen.dart           # 메인 채팅 화면 (반응형)
+│
 └── widgets/
-    ├── chat_view.dart        # 채팅 뷰
-    ├── chat_input.dart       # 입력 위젯
-    ├── message_bubble.dart   # 메시지 버블
-    └── sidebar.dart          # 사이드바
+    ├── chat_view.dart             # 채팅 뷰
+    ├── chat_input.dart            # 입력 위젯
+    ├── message_bubble.dart        # 메시지 버블
+    └── sidebar.dart               # 사이드바
 ```
+
+---
 
 ## 실행 방법
 
@@ -59,12 +127,13 @@ flutter pub run build_runner build --delete-conflicting-outputs
 flutter run -d chrome
 ```
 
+---
+
 ## Firebase 설정
 
 1. Firebase 프로젝트 생성
 2. Vertex AI in Firebase API 활성화
 3. Web App 등록
-4. `flutterfire configure` 실행
 
 ```bash
 # Firebase CLI 설치
@@ -79,79 +148,71 @@ export PATH="$PATH":"$HOME/.pub-cache/bin"
 flutterfire configure --project=your-project-id
 ```
 
-## 보안 주의사항
+### 보안 주의사항
 
-- `lib/firebase_options.dart`에는 API 키와 프로젝트 식별자가 포함됩니다.
-- 이 파일은 `.gitignore`에 포함되어 있어야 하며, 레포지토리에 커밋하지 않습니다.
-- 로컬에서 설정하려면 `lib/firebase_options_example.dart`를 복사해
-  `lib/firebase_options.dart`로 저장하고 값을 채우거나 `flutterfire configure`를 실행하세요.
-- 이미 추적 중인 경우 다음을 실행해 Git 기록에서 제거하세요:
+- `lib/firebase_options.dart`에는 API 키가 포함됩니다
+- 이 파일은 `.gitignore`에 포함되어야 합니다
+- 로컬 설정: `lib/firebase_options_example.dart`를 복사하여 사용
 
-```bash
-git rm --cached lib/firebase_options.dart
+---
+
+## 상태 흐름 (State Flow)
+
+```
+사용자 발화
+    ↓
+[ChatController.sendMessage()]
+    ↓
+상태 체크 (LearningState)
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 분기 조건 (앱 로직이 결정)                                   │
+├─────────────────────────────────────────────────────────────┤
+│ 1. 설계 중 (isDesigning=true)     → 대기                    │
+│ 2. 수업 완료 (isCourseCompleted)  → Analyst (새 학습 시작)  │
+│ 3. 프로파일 미완성                → Analyst (정보 수집)      │
+│ 4. 교수설계 미완성                → Syllabus 생성 트리거    │
+│ 5. 수업 가능 상태                 → Intent 분류             │
+│    ├─ in_class  → Tutor 모드 (스트리밍)                     │
+│    └─ out_class → Feedback 모드                             │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+[각 서비스 호출 → JSON 응답 → State 업데이트]
+    ↓
+사용자에게 응답 출력
 ```
 
-## 구현 계획
+---
 
-### Phase 1: 기본 채팅 (완료)
-- [x] Flutter 프로젝트 세팅
-- [x] Firebase AI 연동
-- [x] 기본 채팅 UI
-- [x] 스트리밍 응답
+## 핵심 설계 원칙
 
-### Phase 2: 멀티 페이즈 시스템
-- [ ] 학습 페이즈 상태 관리
-- [ ] 페이즈별 System Instruction
-- [ ] 니즈 분석 플로우
+### 1. LLM as a Function
+LLM을 순수 함수처럼 취급합니다. 입력(프롬프트)을 받아 출력(JSON)을 반환하고, 상태 변경은 앱 코드에서 수행합니다.
 
-### Phase 3: 교수설계 생성
-- [ ] ADDIE 기반 프롬프트
-- [ ] JSON 구조화 출력
-- [ ] 설계안 저장/수정
+### 2. External State Management
+상태를 LLM 컨텍스트가 아닌 Riverpod에서 관리합니다. 각 LLM 호출에 필요한 정보만 프롬프트에 주입합니다.
 
-### Phase 4: 대화형 수업
-- [ ] 교수설계안 기반 튜터링
-- [ ] 진도 추적
-- [ ] 적응형 피드백
+### 3. Structured Output
+모든 서비스는 JSON Schema를 사용하여 구조화된 출력을 반환합니다. 이를 통해 안정적인 파싱과 상태 업데이트가 가능합니다.
 
-### Phase 5: 데이터 저장
-- [ ] Firestore 연동
-- [ ] 학습자 프로파일 저장
-- [ ] 세션 히스토리 저장
+### 4. Application-Driven Orchestration
+어떤 서비스를 호출할지는 앱 코드가 상태를 보고 결정합니다. LLM에게 판단을 위임하지 않습니다.
 
-## 핵심 기술 접근법
+---
 
-### 프롬프트 체이닝
+## 학술적 배경
 
-복잡한 작업을 단계별 프롬프트로 분리:
+### 관련 개념
 
-```dart
-// 1단계: 니즈 분석
-final goal = await ai.generate("학습 목표를 파악하세요");
+- **Compound AI Systems**: 여러 AI 컴포넌트를 조합한 시스템 (Berkeley)
+- **Multi-Agent Architecture**: 역할별로 분리된 에이전트 구조
+- **Prompt Factoring**: 거대 프롬프트를 작은 단위로 분리
 
-// 2단계: 결과를 다음 단계 입력으로
-final design = await ai.generate("목표: $goal\n교수설계안을 작성하세요");
+### 논문 프레이밍
 
-// 3단계: 설계안 기반 수업
-final lesson = await ai.generate("설계안: $design\n첫 수업을 진행하세요");
-```
+> "본 연구의 시스템은 고정된 선형적 ADDIE 모델이 아니라, **State Hub를 중심으로 각 단계가 유기적으로 연결된 실시간 적응형 교수설계 엔진**을 지향한다."
 
-### 페이즈별 System Instruction
-
-```dart
-enum LearningPhase { needsAnalysis, designGeneration, lesson, assessment }
-
-String getSystemInstruction(LearningPhase phase) {
-  switch (phase) {
-    case LearningPhase.needsAnalysis:
-      return "당신은 학습 니즈 분석 전문가입니다...";
-    case LearningPhase.designGeneration:
-      return "당신은 ADDIE 모델 기반 교수설계 전문가입니다...";
-    case LearningPhase.lesson:
-      return "당신은 친근한 튜터입니다...";
-  }
-}
-```
+---
 
 ## 라이선스
 

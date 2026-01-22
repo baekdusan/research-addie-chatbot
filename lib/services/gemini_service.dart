@@ -13,7 +13,7 @@ class GeminiService {
   GeminiService() {
     // Using Vertex AI backend via Firebase AI
     _model = FirebaseAI.vertexAI().generativeModel(
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
     );
   }
 
