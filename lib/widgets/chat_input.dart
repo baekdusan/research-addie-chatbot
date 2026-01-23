@@ -78,33 +78,22 @@ class _ChatInputState extends State<ChatInput> {
                   child: Row(
                     children: [
                       Expanded(
-                        child: Focus(
+                        child: TextField(
+                          controller: _controller,
                           focusNode: _focusNode,
-                          onKeyEvent: (node, event) {
-                            if (isDesigning) return KeyEventResult.ignored;
-                            if (event is KeyDownEvent &&
-                                event.logicalKey == LogicalKeyboardKey.enter &&
-                                !HardwareKeyboard.instance.isShiftPressed) {
-                              _submit(ref);
-                              return KeyEventResult.handled;
-                            }
-                            return KeyEventResult.ignored;
-                          },
-                          child: TextField(
-                            controller: _controller,
-                            autofocus: true,
-                            maxLines: null,
-                            minLines: 1,
-                            decoration: InputDecoration(
-                              hintText: 'Type a message...',
-                              hintStyle: TextStyle(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                              border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(
-                                vertical: 12,
-                                horizontal: 8,
-                              ),
+                          autofocus: true,
+                          maxLines: null,
+                          minLines: 1,
+                          onSubmitted: isDesigning ? null : (_) => _submit(ref),
+                          decoration: InputDecoration(
+                            hintText: 'Type a message...',
+                            hintStyle: TextStyle(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 12,
+                              horizontal: 8,
                             ),
                           ),
                         ),

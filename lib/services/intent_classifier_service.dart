@@ -11,7 +11,10 @@ enum IntentResult {
 }
 
 class IntentClassifierService {
-  Future<IntentResult> classify(String userText) async {
+  Future<IntentResult> classify(
+    String userText, {
+    String? previousTutorMessage,
+  }) async {
     final schema = Schema.object(
       properties: {
         'intent': Schema.enumString(
@@ -30,7 +33,7 @@ class IntentClassifierService {
       ),
     );
 
-    final prompt = _buildPrompt(userText);
+    final prompt = _buildPrompt(userText, previousTutorMessage);
     final response = await model.generateContent([Content.text(prompt)]);
     final raw = response.text;
     if (raw == null || raw.isEmpty) {
@@ -47,7 +50,18 @@ class IntentClassifierService {
     }
   }
 
-  String _buildPrompt(String userText) {
+  String _buildPrompt(String userText, String? previousTutorMessage) {
+    final contextSection = previousTutorMessage != null
+        ? '''
+[직전 대화 컨텍스트]
+Tutor: $previousTutorMessage
+User: $userText
+'''
+        : '''
+[입력]
+$userText
+''';
+
     return '''너는 학습자의 발화 의도를 분류하는 분류기다.
 오직 분류만 수행하라. 정보 추출이나 답변 생성은 하지 마라.
 
@@ -67,9 +81,15 @@ class IntentClassifierService {
 - "변수가 뭐야?" -> in_class
 - "정답은 3번인 것 같아" -> in_class
 - "예시 하나만 더 들어줘" -> in_class
+- "그래 좋아" -> in_class
+- "네" -> in_class
+- "응 ㄱㄱ" -> in_class
+- "좋아요" -> in_class
+- "시작하자" -> in_class
+- "계속해줘" -> in_class
+- "알겠어" -> in_class
 
-[입력]
-$userText
+$contextSection
 
 [출력 규칙]
 - 반드시 JSON만 출력하라.''';

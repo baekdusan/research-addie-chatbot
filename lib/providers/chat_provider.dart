@@ -175,7 +175,11 @@ class ChatController extends _$ChatController {
     }
 
     final intentService = ref.read(intentClassifierServiceProvider);
-    final intent = await intentService.classify(text);
+    final previousTutorMessage = _getLastTutorMessage(session.id);
+    final intent = await intentService.classify(
+      text,
+      previousTutorMessage: previousTutorMessage,
+    );
     _log('intent', {
       'turn': _turnCounter,
       'value': intent.name,
@@ -451,6 +455,15 @@ class ChatController extends _$ChatController {
         .toList();
   }
 
+  String? _getLastTutorMessage(String sessionId) {
+    final session = ref.read(chatSessionsProvider).firstWhere(
+          (s) => s.id == sessionId,
+        );
+    final tutorMessages = session.messages
+        .where((m) => m.role == MessageRole.model)
+        .toList();
+    return tutorMessages.isEmpty ? null : tutorMessages.last.content;
+  }
 
   void _log(String event, Map<String, dynamic> data) {
     final payload = jsonEncode(data);
