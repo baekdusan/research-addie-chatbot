@@ -30,7 +30,7 @@ class LearningStateNotifier extends _$LearningStateNotifier {
     final normalizedSubject = _normalizeText(subject);
     final normalizedGoal = _normalizeText(goal);
     debugPrint(
-      '[State] update subject=$normalizedSubject goal=$normalizedGoal level=${level?.name} tone=${tonePreference?.name}',
+      '[State] update\nsubject=$normalizedSubject\ngoal=$normalizedGoal\nlevel=${level?.name}\ntone=${tonePreference?.name}\n',
     );
     final subjectChanged =
         normalizedSubject != null && normalizedSubject != current.learnerProfile.subject;
@@ -60,7 +60,7 @@ class LearningStateNotifier extends _$LearningStateNotifier {
     );
 
     debugPrint(
-      '[State] flags mandatory=${state.learnerProfile.isMandatoryFilled} designFilled=${state.instructionalDesign.designFilled} designing=${state.isDesigning} completed=${state.isCourseCompleted}',
+      '[State] flags\nmandatory=${state.learnerProfile.isMandatoryFilled}\ndesignFilled=${state.instructionalDesign.designFilled}\ndesigning=${state.isDesigning}\ncompleted=${state.isCourseCompleted}',
     );
 
     await _saveToPrefs();

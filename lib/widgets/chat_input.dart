@@ -78,22 +78,39 @@ class _ChatInputState extends State<ChatInput> {
                   child: Row(
                     children: [
                       Expanded(
-                        child: TextField(
-                          controller: _controller,
-                          focusNode: _focusNode,
-                          autofocus: true,
-                          maxLines: null,
-                          minLines: 1,
-                          onSubmitted: isDesigning ? null : (_) => _submit(ref),
-                          decoration: InputDecoration(
-                            hintText: 'Type a message...',
-                            hintStyle: TextStyle(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                            border: InputBorder.none,
-                            contentPadding: const EdgeInsets.symmetric(
-                              vertical: 12,
-                              horizontal: 8,
+                        child: Focus(
+                          onKeyEvent: (node, event) {
+                            // Enter 키 눌렀을 때만 처리 (keydown 이벤트)
+                            if (event is KeyDownEvent &&
+                                event.logicalKey == LogicalKeyboardKey.enter) {
+                              // Shift 키가 눌려있지 않으면 전송
+                              if (!HardwareKeyboard.instance.isShiftPressed) {
+                                if (!isDesigning) {
+                                  _submit(ref);
+                                }
+                                return KeyEventResult.handled;
+                              }
+                              // Shift + Enter는 줄바꿈 (기본 동작)
+                              return KeyEventResult.ignored;
+                            }
+                            return KeyEventResult.ignored;
+                          },
+                          child: TextField(
+                            controller: _controller,
+                            focusNode: _focusNode,
+                            autofocus: true,
+                            maxLines: null,
+                            minLines: 1,
+                            decoration: InputDecoration(
+                              hintText: 'Type a message...',
+                              hintStyle: TextStyle(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                              border: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(
+                                vertical: 12,
+                                horizontal: 8,
+                              ),
                             ),
                           ),
                         ),

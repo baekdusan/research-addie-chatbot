@@ -77,6 +77,22 @@ final syllabusDesignerServiceProvider =
 );
 
 typedef SyllabusDesignerServiceRef = ProviderRef<SyllabusDesignerService>;
+String _$sessionExportServiceHash() =>
+    r'c151b5cff50c19697e29b5b5550656f044271359';
+
+/// See also [sessionExportService].
+@ProviderFor(sessionExportService)
+final sessionExportServiceProvider = Provider<SessionExportService>.internal(
+  sessionExportService,
+  name: r'sessionExportServiceProvider',
+  debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
+      ? null
+      : _$sessionExportServiceHash,
+  dependencies: null,
+  allTransitiveDependencies: null,
+);
+
+typedef SessionExportServiceRef = ProviderRef<SessionExportService>;
 String _$activeSessionHash() => r'f3868899d1d9322fc2e4814f5d4d810b3e2c540d';
 
 /// [activeSessionIdProvider]와 [chatSessionsProvider]를 조합하여 현재 활성화된 [ChatSession] 객체를 반환하는 파생(computed) 프로바이더.
@@ -138,7 +154,7 @@ final activeSessionIdProvider =
 );
 
 typedef _$ActiveSessionId = AutoDisposeNotifier<String?>;
-String _$chatControllerHash() => r'408c82bdeab41ca77386783d87b1a11493f12c08';
+String _$chatControllerHash() => r'd48164ca12342d9c8a2434223224ef919b16e67a';
 
 /// 채팅의 핵심 비즈니스 로직을 담당하는 컨트롤러.
 ///

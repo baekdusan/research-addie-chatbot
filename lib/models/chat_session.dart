@@ -1,5 +1,6 @@
 import 'package:uuid/uuid.dart';
 import 'message.dart';
+import 'state_change_event.dart';
 
 /// 하나의 채팅 대화를 표현하는 불변(immutable) 데이터 모델.
 ///
@@ -9,15 +10,18 @@ class ChatSession {
   final String id;
   final String title;
   final List<Message> messages;
+  final List<StateChangeEvent> stateChanges;
   final DateTime createdAt;
 
   ChatSession({
     String? id,
     required this.title,
     List<Message>? messages,
+    List<StateChangeEvent>? stateChanges,
     DateTime? createdAt,
   }) : id = id ?? const Uuid().v4(),
        messages = messages ?? [],
+       stateChanges = stateChanges ?? [],
        createdAt = createdAt ?? DateTime.now();
 
   /// 불변성 패턴 구현을 위한 복사 메서드.
@@ -28,12 +32,14 @@ class ChatSession {
     String? id,
     String? title,
     List<Message>? messages,
+    List<StateChangeEvent>? stateChanges,
     DateTime? createdAt,
   }) {
     return ChatSession(
       id: id ?? this.id,
       title: title ?? this.title,
       messages: messages ?? this.messages,
+      stateChanges: stateChanges ?? this.stateChanges,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -47,6 +53,7 @@ class ChatSession {
       'id': id,
       'title': title,
       'messages': messages.map((m) => m.toJson()).toList(),
+      'stateChanges': stateChanges.map((e) => e.toJson()).toList(),
       'createdAt': createdAt.toIso8601String(),
     };
   }
@@ -61,6 +68,9 @@ class ChatSession {
       title: json['title'],
       messages: (json['messages'] as List)
           .map((m) => Message.fromJson(m as Map<String, dynamic>))
+          .toList(),
+      stateChanges: (json['stateChanges'] as List? ?? [])
+          .map((e) => StateChangeEvent.fromJson(e as Map<String, dynamic>))
           .toList(),
       createdAt: DateTime.parse(json['createdAt']),
     );

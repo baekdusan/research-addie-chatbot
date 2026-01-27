@@ -6,11 +6,13 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../models/chat_session.dart';
 import '../models/message.dart';
 import '../models/learning_state.dart';
+import '../models/state_change_event.dart';
 import '../providers/learning_state_provider.dart';
 import '../services/gemini_service.dart';
 import '../services/intent_classifier_service.dart';
 import '../services/conversational_agent_service.dart';
 import '../services/syllabus_designer_service.dart';
+import '../services/session_export_service.dart';
 
 part 'chat_provider.g.dart';
 
@@ -23,6 +25,9 @@ GeminiService geminiService(GeminiServiceRef ref) {
   return GeminiService();
 }
 
+/// [IntentClassifierService]의 싱글톤 인스턴스 제공.
+///
+/// 사용자 발화가 "수업 내(inClass)" vs "수업 외(outOfClass)"인지 분류합니다.
 @Riverpod(keepAlive: true)
 IntentClassifierService intentClassifierService(
   IntentClassifierServiceRef ref,
@@ -30,6 +35,9 @@ IntentClassifierService intentClassifierService(
   return IntentClassifierService();
 }
 
+/// [ConversationalAgentService]의 싱글톤 인스턴스 제공.
+///
+/// Analyst/Tutor/Feedback 세 가지 모드의 프롬프트와 실행을 담당합니다.
 @Riverpod(keepAlive: true)
 ConversationalAgentService conversationalAgentService(
   ConversationalAgentServiceRef ref,
@@ -37,11 +45,24 @@ ConversationalAgentService conversationalAgentService(
   return ConversationalAgentService();
 }
 
+/// [SyllabusDesignerService]의 싱글톤 인스턴스 제공.
+///
+/// 학습자 프로파일 기반으로 ADDIE 모델 커리큘럼을 생성합니다.
 @Riverpod(keepAlive: true)
 SyllabusDesignerService syllabusDesignerService(
   SyllabusDesignerServiceRef ref,
 ) {
   return SyllabusDesignerService();
+}
+
+/// [SessionExportService]의 싱글톤 인스턴스 제공.
+///
+/// 채팅 세션과 상태 변화를 JSON 파일로 내보냅니다.
+@Riverpod(keepAlive: true)
+SessionExportService sessionExportService(
+  SessionExportServiceRef ref,
+) {
+  return SessionExportService();
 }
 
 /// 앱의 모든 채팅 세션을 관리하는 상태 노티파이어.
@@ -113,10 +134,36 @@ ChatSession? activeSession(ActiveSessionRef ref) {
   return sessions.firstWhere((s) => s.id == activeId);
 }
 
-/// 채팅의 핵심 비즈니스 로직을 담당하는 컨트롤러.
+/// ============================================================
+/// ChatController: Stateless Micro-Agent 패턴의 오케스트레이터
+/// ============================================================
 ///
-/// 사용자 메시지 전송, AI 응답 스트리밍 수신, 세션 상태 업데이트를 조율한다.
-/// [ChatInput]에서 메시지 전송 시, [Sidebar]에서 새 채팅 생성 시 호출된다.
+/// 이 컨트롤러는 "LLM이 판단"하는 Fat Agent 방식이 아닌,
+/// "앱이 판단하고 LLM은 생성만"하는 Thin Micro-Services 패턴을 구현합니다.
+///
+/// 핵심 역할:
+/// 1. 상태 기반 라우팅: 학습 상태에 따라 적절한 Micro-Agent로 분기
+/// 2. Service 오케스트레이션: 각 서비스를 호출하고 결과를 조율
+/// 3. 세션 관리: 메시지 추가, 상태 변화 추적, 히스토리 구성
+///
+/// Flow 종류:
+/// - Analyst Flow: 정보 수집 (JSON 추출)
+/// - Tutor Flow: 실제 수업 (스트리밍 응답)
+/// - Feedback Flow: 피드백 처리 (JSON 추출)
+/// - Syllabus Design: 커리큘럼 생성 (백그라운드)
+///
+/// 의사결정 트리:
+/// ```
+/// sendMessage()
+///   ├─ isDesigning? → 무시
+///   ├─ isCourseCompleted? → Analyst (새 학습)
+///   ├─ !isReady? → Analyst (정보 수집)
+///   └─ isReady? → Intent 분류
+///       ├─ inClass → Tutor (수업)
+///       └─ outOfClass → Feedback (피드백)
+/// ```
+///
+/// 사용처: [ChatInput], [Sidebar]
 @Riverpod(keepAlive: true)
 class ChatController extends _$ChatController {
   int _turnCounter = 0;
@@ -125,12 +172,28 @@ class ChatController extends _$ChatController {
     // Nothing to initialize
   }
 
-  /// 사용자 메시지를 처리하고 상태 기반 의사결정을 수행하는 메인 메서드.
+  /// ============================================================
+  /// 메인 진입점: 사용자 메시지를 받아 상태 기반으로 적절한 흐름으로 라우팅
+  /// ============================================================
+  ///
+  /// ChatController의 핵심 메서드로, 모든 사용자 입력이 이 메서드를 거쳐갑니다.
+  /// "앱이 판단하고 LLM은 생성만" 하는 Stateless Micro-Agent 패턴의 오케스트레이터입니다.
+  ///
+  /// 의사결정 흐름:
+  /// 1. 세션 생성/조회
+  /// 2. 상태 체크 → 적절한 Flow로 라우팅
+  ///    - 설계 중? → 무시 (중복 방지)
+  ///    - 완료 후? → Analyst Flow (새 학습 시작)
+  ///    - 준비 안됨? → Analyst Flow (정보 수집)
+  ///    - 준비 완료? → Intent 분류 → Tutor/Feedback Flow
   Future<void> sendMessage(String text) async {
     _turnCounter += 1;
     final activeId = ref.read(activeSessionIdProvider);
     final sessions = ref.read(chatSessionsProvider);
 
+    // ============================================================
+    // 1. 세션 준비: 없으면 새로 생성, 있으면 조회
+    // ============================================================
     ChatSession? session;
     if (activeId == null) {
       // 활성 세션이 없으면 새 세션을 생성하고, 첫 메시지 앞부분을 제목으로 사용한다.
@@ -143,8 +206,12 @@ class ChatController extends _$ChatController {
       session = sessions.firstWhere((s) => s.id == activeId);
     }
 
+    // 사용자 메시지를 세션에 추가
     _appendMessage(session.id, Message(role: MessageRole.user, content: text));
 
+    // ============================================================
+    // 2. 현재 학습 상태 조회 및 로깅
+    // ============================================================
     final learning = ref.read(learningStateNotifierProvider);
     _log('turn.start', {
       'turn': _turnCounter,
@@ -158,15 +225,23 @@ class ChatController extends _$ChatController {
       'goal': learning.learnerProfile.goal,
       'totalSteps': learning.instructionalDesign.totalSteps,
     });
+
+    // ============================================================
+    // 3. 상태 기반 라우팅: "앱이 판단"하는 핵심 로직
+    // ============================================================
+
+    // 3-1. 설계 중이면 무시 (중복 요청 방지)
     if (learning.isDesigning) {
       return;
     }
 
+    // 3-2. 학습 완료 후 새 대화 → Analyst로 재시작
     if (learning.isCourseCompleted) {
       await _runAnalystFlow(session.id, text, learning, forceAnalyst: true);
       return;
     }
 
+    // 3-3. 프로파일/설계 미완성 → Analyst로 정보 수집
     final isReady = learning.learnerProfile.isMandatoryFilled &&
         learning.instructionalDesign.designFilled;
     if (!isReady) {
@@ -174,6 +249,7 @@ class ChatController extends _$ChatController {
       return;
     }
 
+    // 3-4. 준비 완료 → Intent 분류 후 Tutor/Feedback 선택
     final intentService = ref.read(intentClassifierServiceProvider);
     final previousTutorMessage = _getLastTutorMessage(session.id);
     final intent = await intentService.classify(
@@ -185,10 +261,11 @@ class ChatController extends _$ChatController {
       'value': intent.name,
     });
 
+    // Intent 결과에 따라 분기
     if (intent == IntentResult.inClass) {
-      await _runTutorFlow(session.id, text);
+      await _runTutorFlow(session.id, text);  // 수업 내 발화 → 튜터링
     } else {
-      await _runFeedbackFlow(session.id, text);
+      await _runFeedbackFlow(session.id, text);  // 수업 외 발화 → 피드백
     }
   }
 
@@ -200,12 +277,55 @@ class ChatController extends _$ChatController {
     ref.read(activeSessionIdProvider.notifier).set(null);
   }
 
+  /// 지정된 세션을 JSON 파일로 내보낸다.
+  ///
+  /// 세션의 메시지와 상태 변화 이벤트를 타임라인으로 조합하여
+  /// 브라우저를 통해 다운로드한다.
+  Future<void> downloadSession(String sessionId) async {
+    try {
+      final sessions = ref.read(chatSessionsProvider);
+      final session = sessions.firstWhere(
+        (s) => s.id == sessionId,
+        orElse: () => throw Exception('세션을 찾을 수 없습니다.'),
+      );
+
+      final learningState = ref.read(learningStateNotifierProvider);
+      final exportService = ref.read(sessionExportServiceProvider);
+
+      await exportService.exportSession(session, learningState);
+    } catch (e) {
+      throw Exception('세션 다운로드 실패: $e');
+    }
+  }
+
+  /// ============================================================
+  /// Analyst Flow: 학습자 정보 수집 단계
+  /// ============================================================
+  ///
+  /// 역할: ConversationalAgentService.runAnalyst를 호출하여
+  ///       사용자 발화에서 학습 정보(subject, goal, level, tone)를 추출합니다.
+  ///
+  /// 실행 조건:
+  /// - 프로파일 미완성 (subject/goal 없음)
+  /// - 학습 완료 후 새 학습 시작 (forceAnalyst=true)
+  ///
+  /// 처리 흐름:
+  /// 1. 이미 완성됨 + 강제 아님 → Feedback으로 전환
+  /// 2. 프로파일 완성 + 설계 미완 → 설계 시작
+  /// 3. runAnalyst 호출 → JSON 추출 (비스트리밍)
+  /// 4. 추출된 정보로 상태 업데이트
+  /// 5. 필수 정보 완성 시 → 자동으로 커리큘럼 생성 시작
+  ///
+  /// [forceAnalyst] 학습 완료 후 강제로 Analyst 모드 실행 여부
   Future<void> _runAnalystFlow(
     String sessionId,
     String userText,
     LearningState previous, {
     bool forceAnalyst = false,
   }) async {
+    // ============================================================
+    // 1. 상태 체크: 이미 준비됐으면 다른 Flow로 전환
+    // ============================================================
     if (!forceAnalyst &&
         previous.learnerProfile.isMandatoryFilled &&
         previous.instructionalDesign.designFilled) {
@@ -213,6 +333,7 @@ class ChatController extends _$ChatController {
       return;
     }
 
+    // 프로파일은 완성됐지만 설계가 안됐으면 → 설계 시작
     if (!forceAnalyst &&
         previous.learnerProfile.isMandatoryFilled &&
         !previous.instructionalDesign.designFilled) {
@@ -220,6 +341,9 @@ class ChatController extends _$ChatController {
       return;
     }
 
+    // ============================================================
+    // 2. Analyst Agent 호출: 정보 추출 (비스트리밍, JSON)
+    // ============================================================
     final agent = ref.read(conversationalAgentServiceProvider);
     try {
       final result = await agent.runAnalyst(previous, userText);
@@ -230,8 +354,13 @@ class ChatController extends _$ChatController {
         'level': result.level?.name,
         'tone': result.tonePreference?.name,
       });
+
+      // 사용자에게 응답 표시
       _appendAssistantMessage(sessionId, result.response);
 
+      // ============================================================
+      // 3. 추출된 정보로 학습 상태 업데이트
+      // ============================================================
       await ref
           .read(learningStateNotifierProvider.notifier)
           .updateFromExtractedInfo(
@@ -242,6 +371,28 @@ class ChatController extends _$ChatController {
           );
 
       final updated = ref.read(learningStateNotifierProvider);
+
+      // ============================================================
+      // 4. 프로필 변경 사항 추적 (디버깅/분석용)
+      // ============================================================
+      final profileChanges = <String, dynamic>{};
+      if (result.subject != null) profileChanges['subject'] = result.subject;
+      if (result.goal != null) profileChanges['goal'] = result.goal;
+      if (result.level != null) profileChanges['level'] = result.level!.name;
+      if (result.tonePreference != null) {
+        profileChanges['tonePreference'] = result.tonePreference!.name;
+      }
+      if (profileChanges.isNotEmpty) {
+        _recordStateChange(
+          sessionId,
+          StateChangeType.profileUpdated,
+          profileChanges,
+        );
+      }
+
+      // ============================================================
+      // 5. 필수 정보 완성 체크 → 자동으로 커리큘럼 생성 시작
+      // ============================================================
       final wasMandatory = previous.learnerProfile.isMandatoryFilled;
       final shouldTriggerDesign =
           updated.learnerProfile.isMandatoryFilled &&
@@ -255,13 +406,42 @@ class ChatController extends _$ChatController {
     }
   }
 
+  /// ============================================================
+  /// Tutor Flow: 실제 수업 진행 (스트리밍 응답)
+  /// ============================================================
+  ///
+  /// 역할: 실시간 스트리밍으로 튜터링 응답을 생성합니다.
+  ///
+  /// 실행 조건:
+  /// - 프로파일 완성됨 (subject, goal 있음)
+  /// - 커리큘럼 생성됨
+  /// - Intent Classifier가 "inClass" 판단 (수업 내 발화)
+  ///
+  /// 처리 흐름:
+  /// 1. 대화 히스토리 구성 (최근 6개)
+  /// 2. buildTutorStreamingPrompt로 프롬프트 생성
+  /// 3. GeminiService.streamResponse 호출 (스트리밍)
+  /// 4. 청크 단위로 수신하며 UI 실시간 업데이트
+  /// 5. 완료 후 isStreaming=false 처리
+  ///
+  /// 특징:
+  /// - JSON이 아닌 자연어 생성
+  /// - 실시간 스트리밍으로 사용자 경험 향상
+  /// - 대화 히스토리를 컨텍스트로 전달
   Future<void> _runTutorFlow(String sessionId, String userText) async {
     final learning = ref.read(learningStateNotifierProvider);
     final agent = ref.read(conversationalAgentServiceProvider);
     String? assistantId;
     try {
+      // ============================================================
+      // 1. 대화 히스토리 구성 + 프롬프트 생성
+      // ============================================================
       final history = _buildHistory(sessionId, userText, limit: 6);
       final prompt = agent.buildTutorStreamingPrompt(learning, userText, history);
+
+      // ============================================================
+      // 2. 빈 메시지 생성 (스트리밍 준비)
+      // ============================================================
       assistantId = const Uuid().v4();
       _appendMessage(
         sessionId,
@@ -269,10 +449,13 @@ class ChatController extends _$ChatController {
           id: assistantId,
           role: MessageRole.model,
           content: '',
-          isStreaming: true,
+          isStreaming: true,  // 스트리밍 중 표시
         ),
       );
 
+      // ============================================================
+      // 3. Gemini 스트리밍 API 호출
+      // ============================================================
       final gemini = ref.read(geminiServiceProvider);
       final session = ref.read(chatSessionsProvider).firstWhere(
             (s) => s.id == sessionId,
@@ -282,6 +465,9 @@ class ChatController extends _$ChatController {
         prompt,
       );
 
+      // ============================================================
+      // 4. 스트리밍 수신: 청크 단위로 UI 업데이트
+      // ============================================================
       String fullResponse = '';
       await for (final chunk in stream) {
         fullResponse += chunk;
@@ -298,6 +484,9 @@ class ChatController extends _$ChatController {
             .updateSession(currentSession.copyWith(messages: newMessages));
       }
 
+      // ============================================================
+      // 5. 스트리밍 완료: isStreaming=false 처리
+      // ============================================================
       final finalSessions = ref.read(chatSessionsProvider);
       final finalSession = finalSessions.firstWhere((s) => s.id == sessionId);
       final finalMessages = [
@@ -308,11 +497,17 @@ class ChatController extends _$ChatController {
           .read(chatSessionsProvider.notifier)
           .updateSession(finalSession.copyWith(messages: finalMessages));
 
+      // ============================================================
+      // 6. designReady 플래그 정리 (설계 완료 안내 숨김)
+      // ============================================================
       final latest = ref.read(learningStateNotifierProvider);
       if (latest.showDesignReady) {
         await ref.read(learningStateNotifierProvider.notifier).setDesignReady(false);
       }
     } catch (e) {
+      // ============================================================
+      // 에러 처리: 스트리밍 중단 시 에러 메시지 표시
+      // ============================================================
       if (assistantId != null) {
         final sessions = ref.read(chatSessionsProvider);
         final session = sessions.firstWhere((s) => s.id == sessionId);
@@ -335,10 +530,34 @@ class ChatController extends _$ChatController {
     }
   }
 
+  /// ============================================================
+  /// Feedback Flow: 수업 외 발화 처리 (난이도/말투 변경, 재설계 요청)
+  /// ============================================================
+  ///
+  /// 역할: ConversationalAgentService.runFeedback을 호출하여
+  ///       수업과 관련 없는 피드백/요청을 처리합니다.
+  ///
+  /// 실행 조건:
+  /// - 프로파일/설계 완성됨
+  /// - Intent Classifier가 "outOfClass" 판단 (수업 외 발화)
+  ///
+  /// 처리 흐름:
+  /// 1. runFeedback 호출 → JSON 추출 (비스트리밍)
+  /// 2. 명시적 변경 요청 시 → 프로파일 업데이트 (level, tone)
+  /// 3. 재설계 필요 + 명시적 요청 → 커리큘럼 재생성
+  /// 4. 단순 피드백 → 응답만 표시
+  ///
+  /// 특징:
+  /// - explicitChange=true일 때만 상태 변경 (추측 방지)
+  /// - needs_redesign + explicitChange → 커리큘럼 재생성
+  /// - 단순 잡담은 무시 (needs_redesign=false)
   Future<void> _runFeedbackFlow(String sessionId, String userText) async {
     final learning = ref.read(learningStateNotifierProvider);
     final agent = ref.read(conversationalAgentServiceProvider);
     try {
+      // ============================================================
+      // 1. Feedback Agent 호출: 피드백 분석 (비스트리밍, JSON)
+      // ============================================================
       final result = await agent.runFeedback(learning, userText);
       _appendAssistantMessage(sessionId, result.response);
       _log('feedback.result', {
@@ -348,6 +567,9 @@ class ChatController extends _$ChatController {
         'redesignRequest': result.redesignRequest,
       });
 
+      // ============================================================
+      // 2. 명시적 변경 요청 시 프로파일 업데이트
+      // ============================================================
       if (result.explicitChange) {
         await ref
             .read(learningStateNotifierProvider.notifier)
@@ -357,13 +579,28 @@ class ChatController extends _$ChatController {
             );
       }
 
+      // ============================================================
+      // 3. 재설계 필요 + 명시적 요청 → 커리큘럼 재생성
+      // ============================================================
       if (result.needsRedesign && result.explicitChange) {
+        // 재설계 요청 추적
+        _recordStateChange(
+          sessionId,
+          StateChangeType.redesignRequested,
+          {
+            'redesignRequest': result.redesignRequest ?? '',
+            'level': result.level?.name,
+            'tonePreference': result.tonePreference?.name,
+          },
+        );
+
         _startSyllabusDesign(
           sessionId,
           isRedesign: true,
           redesignRequest: result.redesignRequest,
         );
       } else if (result.needsRedesign && !result.explicitChange) {
+        // 재설계 필요하지만 명시적 요청 아님 → 무시
         _log('feedback.ignored_redesign', {'reason': 'not_explicit'});
       }
     } catch (e) {
@@ -371,12 +608,40 @@ class ChatController extends _$ChatController {
     }
   }
 
+  /// ============================================================
+  /// Syllabus Design: 커리큘럼 생성/재생성 (백그라운드)
+  /// ============================================================
+  ///
+  /// 역할: SyllabusDesignerService를 호출하여 학습 로드맵을 생성합니다.
+  ///
+  /// 실행 조건:
+  /// - 필수 프로파일 완성 후 (Analyst Flow에서 자동 호출)
+  /// - 명시적 재설계 요청 시 (Feedback Flow에서 호출)
+  ///
+  /// 처리 흐름:
+  /// 1. isDesigning=true 설정 (중복 방지)
+  /// 2. Future()로 비동기 실행 (블로킹 방지)
+  /// 3. SyllabusDesignerService.generate 호출
+  /// 4. 생성된 syllabus로 상태 업데이트
+  /// 5. 완료 후 자동으로 _runTutorFlow 실행 (수업 시작)
+  ///
+  /// 특징:
+  /// - 백그라운드 실행으로 UI 블로킹 방지
+  /// - 완료 후 자동으로 수업 시작
+  /// - redesignRequest로 재설계 시 사용자 요청 반영
+  ///
+  /// [isRedesign] 재설계 여부 (초기 생성=false, 재설계=true)
+  /// [redesignRequest] 재설계 시 사용자의 구체적 요청
   void _startSyllabusDesign(
     String sessionId, {
     required bool isRedesign,
     String? redesignRequest,
   }) {
     final learning = ref.read(learningStateNotifierProvider);
+
+    // ============================================================
+    // 1. 중복 방지: 이미 설계 중이면 무시
+    // ============================================================
     if (learning.isDesigning) return;
 
     _log('design.start', {
@@ -384,8 +649,25 @@ class ChatController extends _$ChatController {
       'isRedesign': isRedesign,
       'request': redesignRequest,
     });
+
+    // ============================================================
+    // 2. 설계 시작 플래그 설정
+    // ============================================================
     unawaited(ref.read(learningStateNotifierProvider.notifier).setDesigning(true));
 
+    // 커리큘럼 생성 시작 추적
+    _recordStateChange(
+      sessionId,
+      StateChangeType.syllabusGenerationStarted,
+      {
+        'isRedesign': isRedesign,
+        if (redesignRequest != null) 'redesignRequest': redesignRequest,
+      },
+    );
+
+    // ============================================================
+    // 3. 백그라운드 실행: UI 블로킹 방지
+    // ============================================================
     Future(() async {
       try {
         final designer = ref.read(syllabusDesignerServiceProvider);
@@ -399,9 +681,30 @@ class ChatController extends _$ChatController {
           'topics': syllabus.map((step) => step.topic).toList(),
         });
 
+        // ============================================================
+        // 4. 생성된 커리큘럼으로 상태 업데이트
+        // ============================================================
         await ref
             .read(learningStateNotifierProvider.notifier)
             .setSyllabus(syllabus);
+
+        // 커리큘럼 생성 완료 추적
+        _recordStateChange(
+          sessionId,
+          StateChangeType.syllabusGenerated,
+          {
+            'stepCount': syllabus.length,
+            'steps': syllabus.map((step) => {
+              'step': step.step,
+              'topic': step.topic,
+              'objective': step.objective,
+            }).toList(),
+          },
+        );
+
+        // ============================================================
+        // 5. 완료 후 자동으로 수업 시작
+        // ============================================================
         await _runTutorFlow(sessionId, '수업을 시작해줘');
       } catch (e) {
         _log('design.error', {'error': e.toString()});
@@ -413,14 +716,21 @@ class ChatController extends _$ChatController {
     });
   }
 
+  /// ============================================================
+  /// Helper: 메시지 추가 헬퍼 메서드들
+  /// ============================================================
+
+  /// AI 응답 메시지 추가 (Analyst/Feedback Flow에서 사용)
   void _appendAssistantMessage(String sessionId, String content) {
     _appendMessage(sessionId, Message(role: MessageRole.model, content: content));
   }
 
+  /// 시스템 에러 메시지 추가 (예외 처리 시 사용)
   void _appendSystemMessage(String sessionId, String content) {
     _appendMessage(sessionId, Message(role: MessageRole.system, content: content));
   }
 
+  /// 메시지를 세션에 추가하고 상태 업데이트
   void _appendMessage(String sessionId, Message message) {
     final sessions = ref.read(chatSessionsProvider);
     final session = sessions.firstWhere((s) => s.id == sessionId);
@@ -430,6 +740,39 @@ class ChatController extends _$ChatController {
         .updateSession(session.copyWith(messages: updatedMessages));
   }
 
+  /// 학습 상태 변화를 타임라인 이벤트로 기록한다.
+  ///
+  /// 메시지 사이에 발생한 상태 변화를 추적하여 학습 플랜 생성 과정을 시각화할 수 있다.
+  void _recordStateChange(
+    String sessionId,
+    StateChangeType type,
+    Map<String, dynamic> changes,
+  ) {
+    final sessions = ref.read(chatSessionsProvider);
+    final session = sessions.firstWhere((s) => s.id == sessionId);
+    final event = StateChangeEvent.create(type: type, changes: changes);
+    final updatedStateChanges = [...session.stateChanges, event];
+    ref
+        .read(chatSessionsProvider.notifier)
+        .updateSession(session.copyWith(stateChanges: updatedStateChanges));
+  }
+
+  /// ============================================================
+  /// Helper: 대화 히스토리 구성 (Tutor Flow용)
+  /// ============================================================
+  ///
+  /// 역할: 최근 N개의 대화를 "User: ...", "Tutor: ..." 형식으로 변환합니다.
+  ///
+  /// 사용처:
+  /// - _runTutorFlow에서 프롬프트 생성 시 컨텍스트로 전달
+  ///
+  /// 처리:
+  /// 1. system 메시지 제외 (사용자/AI만 포함)
+  /// 2. 현재 사용자 메시지는 제외 (중복 방지)
+  /// 3. 최근 N개만 선택 (기본 6개)
+  /// 4. "User: ...", "Tutor: ..." 형식으로 변환
+  ///
+  /// [limit] 가져올 최대 메시지 수 (기본 6개)
   List<String> _buildHistory(
     String sessionId,
     String currentUserText, {
@@ -438,23 +781,44 @@ class ChatController extends _$ChatController {
     final session = ref.read(chatSessionsProvider).firstWhere(
           (s) => s.id == sessionId,
         );
+
+    // 1. system 메시지 제외
     final filtered = session.messages
         .where((m) => m.role != MessageRole.system)
         .toList();
+
+    // 2. 현재 사용자 메시지 제외 (중복 방지)
     if (filtered.isNotEmpty &&
         filtered.last.role == MessageRole.user &&
         filtered.last.content == currentUserText) {
       filtered.removeLast();
     }
+
+    // 3. 최근 N개만 선택
     final recent = filtered.length > limit
         ? filtered.sublist(filtered.length - limit)
         : filtered;
+
+    // 4. 포맷팅: "User: ...", "Tutor: ..."
     return recent
         .map((m) =>
             m.role == MessageRole.user ? 'User: ${m.content}' : 'Tutor: ${m.content}')
         .toList();
   }
 
+  /// ============================================================
+  /// Helper: 마지막 튜터 메시지 조회 (Intent Classifier용)
+  /// ============================================================
+  ///
+  /// 역할: Intent Classifier가 컨텍스트를 파악할 수 있도록
+  ///       바로 직전 튜터 메시지를 제공합니다.
+  ///
+  /// 사용처:
+  /// - sendMessage에서 Intent 분류 시 previousTutorMessage로 전달
+  ///
+  /// 반환:
+  /// - 튜터 메시지가 있으면 마지막 내용 반환
+  /// - 없으면 null 반환
   String? _getLastTutorMessage(String sessionId) {
     final session = ref.read(chatSessionsProvider).firstWhere(
           (s) => s.id == sessionId,
@@ -465,8 +829,20 @@ class ChatController extends _$ChatController {
     return tutorMessages.isEmpty ? null : tutorMessages.last.content;
   }
 
+  /// ============================================================
+  /// Helper: 디버깅용 로그 출력
+  /// ============================================================
+  ///
+  /// 역할: Flow 실행 과정을 추적하고 디버깅합니다.
+  ///
+  /// 로그 종류:
+  /// - turn.start: 턴 시작 + 현재 상태
+  /// - intent: Intent 분류 결과
+  /// - analyst.extract: Analyst 추출 결과
+  /// - feedback.result: Feedback 처리 결과
+  /// - design.start/generated/error: 커리큘럼 생성 과정
   void _log(String event, Map<String, dynamic> data) {
-    final payload = jsonEncode(data);
-    debugPrint('[Flow] $event $payload');
+    final payload = const JsonEncoder.withIndent('  ').convert(data);
+    debugPrint('[Flow] $event\n$payload\n');
   }
 }

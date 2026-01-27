@@ -91,12 +91,29 @@ $userText
 ''';
   }
 
+  /// Analyst 모드: 사용자의 학습 정보를 수집하는 Micro-Agent
+  ///
+  /// 이 메서드는 "대화를 통한 정보 수집" 단계를 담당합니다.
+  /// LLM에게 사용자 발화를 분석시켜서:
+  /// 1. 명시적으로 언급된 정보만 추출 (추측 금지)
+  /// 2. 사용자에게 보여줄 자연스러운 응답 생성
+  /// 3. 필수 정보가 모두 모이면 "로드맵 설계 예고" 응답
+  ///
+  /// [state] 현재 학습 상태 (기존에 수집된 정보 포함)
+  /// [userText] 사용자의 현재 입력
+  /// Returns: 추출된 정보 + 사용자 응답을 담은 [AnalystResult]
   Future<AnalystResult> runAnalyst(
     LearningState state,
     String userText,
   ) async {
+    // ============================================================
+    // 1. JSON Schema 정의: LLM이 반환할 구조를 미리 규정
+    // ============================================================
+    // Gemini의 Controlled Generation 기능을 사용하여
+    // 자유로운 자연어 대신 정확한 JSON 구조를 받습니다.
     final schema = Schema.object(
       properties: {
+        // 1-1. extracted_info: 사용자 발화에서 추출한 학습자 정보
         'extracted_info': Schema.object(
           properties: {
             'subject': Schema.string(description: '학습 주제'),
@@ -110,6 +127,7 @@ $userText
               description: '선호 말투',
             ),
           },
+          // 모든 필드가 optional이므로 추출되지 않은 것은 null로 반환됨
           optionalProperties: [
             'subject',
             'goal',
@@ -117,6 +135,9 @@ $userText
             'tone_preference',
           ],
         ),
+
+        // 1-2. explicit_fields: 각 필드가 "명시적으로 언급되었는지" 여부
+        // 이를 통해 LLM의 추측을 막고, 실제로 언급된 정보만 업데이트합니다.
         'explicit_fields': Schema.object(
           properties: {
             'subject': Schema.boolean(description: 'subject가 명시적으로 언급됨'),
@@ -132,53 +153,90 @@ $userText
             'tone_preference',
           ],
         ),
+
+        // 1-3. response: 사용자에게 보여줄 자연스러운 한국어 응답
         'response': Schema.string(description: '사용자에게 보여줄 응답'),
       },
     );
 
+    // ============================================================
+    // 2. Firebase AI (Gemini) 모델 설정
+    // ============================================================
     final model = FirebaseAI.vertexAI().generativeModel(
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.0-flash', // 빠르고 정확한 분류/추출용 모델
       generationConfig: GenerationConfig(
-        responseMimeType: 'application/json',
-        responseSchema: schema,
-        temperature: 0.0,
+        responseMimeType: 'application/json', // JSON 응답 강제
+        responseSchema: schema, // 위에서 정의한 스키마 적용
+        temperature: 0.0, // 창의성 최소화 (정확한 추출이 목표)
       ),
     );
 
+    // ============================================================
+    // 3. 프롬프트 생성 및 API 호출
+    // ============================================================
     final prompt = _buildAnalystPrompt(state, userText);
     final response = await model.generateContent([Content.text(prompt)]);
     final raw = response.text;
+
+    // 3-1. 응답 검증: 비어있으면 재시도 유도
     if (raw == null || raw.isEmpty) {
       return AnalystResult(response: '조금 더 자세히 말씀해 주실 수 있을까요?');
     }
 
+    // ============================================================
+    // 4. JSON 파싱: LLM 응답을 구조화된 데이터로 변환
+    // ============================================================
     final data = jsonDecode(raw) as Map<String, dynamic>;
+
+    // 4-1. extracted_info 파싱 (기본값: 빈 맵)
     final extracted =
         (data['extracted_info'] as Map?)?.cast<String, dynamic>() ??
             <String, dynamic>{};
 
+    // 4-2. explicit_fields 파싱 (기본값: 빈 맵)
     final explicit =
         (data['explicit_fields'] as Map?)?.cast<String, dynamic>() ??
             <String, dynamic>{};
 
+    // ============================================================
+    // 5. explicit_fields 기반 검증
+    // ============================================================
+    // LLM이 "이 정보는 명시적으로 언급되었다"고 표시한 것만 추출합니다.
+    // 이를 통해 LLM의 "추측"을 차단하고, 실제 사용자 발화에서 나온 정보만 사용합니다.
     final subjectExplicit = explicit['subject'] as bool? ?? false;
     final goalExplicit = explicit['goal'] as bool? ?? false;
     final levelExplicit = explicit['level'] as bool? ?? false;
     final toneExplicit = explicit['tone_preference'] as bool? ?? false;
 
+    // ============================================================
+    // 6. 최종 데이터 구성: explicit_fields가 true인 것만 추출
+    // ============================================================
+    // 6-1. subject: 명시적으로 언급되었을 때만 정규화 후 반환
     final subject = subjectExplicit
         ? _normalizeText(extracted['subject'] as String?)
         : null;
+
+    // 6-2. goal: 명시적으로 언급되었을 때만 정규화 후 반환
     final goal =
         goalExplicit ? _normalizeText(extracted['goal'] as String?) : null;
 
+    // ============================================================
+    // 7. AnalystResult 반환
+    // ============================================================
     return AnalystResult(
+      // 사용자에게 보여줄 자연스러운 응답 (fallback 포함)
       response: data['response'] as String? ?? '조금 더 자세히 말씀해 주실 수 있을까요? ',
+
+      // 명시적으로 언급된 경우에만 값 반환
       subject: subject,
       goal: goal,
+
+      // level: explicit이고 값이 존재할 때만 enum으로 변환
       level: levelExplicit && extracted['level'] != null
           ? LearnerLevel.values.byName(extracted['level'] as String)
           : null,
+
+      // tonePreference: explicit이고 값이 존재할 때만 enum으로 변환
       tonePreference: toneExplicit && extracted['tone_preference'] != null
           ? TonePreference.values.byName(
               extracted['tone_preference'] as String,
@@ -260,41 +318,41 @@ $userText
     final level = profile.level?.name ?? '미정';
     final tone = profile.tonePreference?.name ?? '미정';
     return '''너는 학습자의 정보를 수집하는 친절한 인터뷰어다.
-자연스러운 대화를 통해 학습자의 학습 주제(subject), 목표(goal), 수준(level), 선호 말투(tone_preference)를 파악하라.
+    자연스러운 대화를 통해 학습자의 학습 주제(subject), 목표(goal), 수준(level), 선호 말투(tone_preference)를 파악하라.
 
-[수집할 정보]
-- subject: 무엇을 배우고 싶은가?
-- goal: 이 학습으로 무엇을 하고 싶은가?
-- level: beginner/intermediate/expert 중 하나
-- tone_preference: kind/formal/casual 중 하나
+    [수집할 정보]
+    - subject: 무엇을 배우고 싶은가?
+    - goal: 이 학습으로 무엇을 하고 싶은가?
+    - level: beginner/intermediate/expert 중 하나
+    - tone_preference: kind/formal/casual 중 하나
 
-[대화 원칙]
-1) 한 번에 하나의 정보만 물어보라.
-2) 이미 파악된 정보는 다시 묻지 마라.
-3) 사용자가 이미 답한 정보는 extracted_info에 반드시 반영하라.
-4) 필수 정보(subject, goal)가 모두 파악되면:
-   - 사용자에게 "로드맵(학습 계획)을 만들겠다"고 안내하라.
-   - 추가 질문은 하지 마라.
-5) 현재 정보가 '미정'이면 그 정보를 얻기 위한 질문을 우선하라.
-6) 사용자가 명시적으로 언급하지 않은 값은 절대 추측하지 말고 null로 두어라.
-7) explicit_fields에 true로 표시된 항목만 extracted_info에 값을 채우고, 나머지는 null로 두어라.
+    [대화 원칙]
+    2) 이미 파악된 정보는 다시 묻지 마라.
+    3) 사용자가 이미 답한 정보는 extracted_info에 반드시 반영하라.
+    4) 필수 정보(subject, goal, level, tone_preference)가 모두 파악되면:
+      - 사용자에게 "로드맵(학습 계획)을 만들겠다"고 안내하라.
+      - 추가 질문은 하지 마라.
+    5) 현재 정보가 '미정'이면 그 정보를 얻기 위한 질문을 우선하라.
+    6) 사용자가 명시적으로 언급하지 않은 값은 절대 추측하지 말고 null로 두어라.
+    7) explicit_fields에 true로 표시된 항목만 extracted_info에 값을 채우고, 나머지는 null로 두어라.
 
-[현재까지 파악된 정보]
-- subject: ${profile.subject}
-- goal: ${profile.goal}
-- level: $level
-- tone_preference: $tone
+    [현재까지 파악된 정보]
+    - subject: ${profile.subject}
+    - goal: ${profile.goal}
+    - level: $level
+    - tone_preference: $tone
 
-[입력]
-$userText
+    [입력]
+    $userText
 
-[출력 규칙]
-- 반드시 JSON만 출력하라.
-- extracted_info의 각 필드는 새로 파악되었으면 값을 넣고, 파악되지 않았으면 null로 두어라.
-- explicit_fields는 각 항목이 명시적으로 언급되었는지 true/false로 표시하라.
-- response는 사용자에게 보여줄 자연스러운 한국어 한 문단이다.''';
+    [출력 규칙]
+    - 반드시 JSON만 출력하라.
+    - extracted_info의 각 필드는 새로 파악되었으면 값을 넣고, 파악되지 않았으면 null로 두어라.
+    - explicit_fields는 각 항목이 명시적으로 언급되었는지 true/false로 표시하라.
+    - response는 사용자에게 보여줄 자연스러운 한국어 한 문단이다.''';
   }
 
+  // 현재 상태와 학습자의 학습 외 발화를 통해 피드백을 반영
   String _buildFeedbackPrompt(LearningState state, String userText) {
     final profile = state.learnerProfile;
     final design = state.instructionalDesign;
@@ -308,33 +366,33 @@ $userText
     }).join('\n');
 
     return '''너는 학습자의 피드백을 수용하는 유연한 튜터다.
-학습자의 요청을 반영하여 프로필을 업데이트하고, 필요하면 학습 로드맵 재설계를 요청하라.
+      학습자의 요청을 반영하여 프로필을 업데이트하고, 필요하면 학습 로드맵 재설계를 요청하라.
 
-[현재 학습 상태]
-- 주제(subject): ${profile.subject}
-- 목표(goal): ${profile.goal}
-- 수준(level): $level
-- 선호 말투(tone_preference): $tone
+      [현재 학습 상태]
+      - 주제(subject): ${profile.subject}
+      - 목표(goal): ${profile.goal}
+      - 수준(level): $level
+      - 선호 말투(tone_preference): $tone
 
-[학습 로드맵]
-$syllabusBlock
+      [학습 로드맵]
+      $syllabusBlock
 
-[피드백 처리 원칙]
-1) 피드백을 긍정적으로 수용하라.
-2) 난이도/말투 변경 요청은 profile_update에 반영하라.
-3) 학습 경로 자체의 변경(목표 변경, 주제 변경, 순서 변경)이 필요하면 needs_redesign=true로 설정하라.
-4) 단순 난이도/스타일 조정은 needs_redesign 없이 처리하라.
-5) response는 피드백 수용 + 수업 계속 안내를 포함하라.
-6) 사용자가 명시적으로 목표/주제/순서 변경을 요청한 경우에만 explicit_change=true로 설정하라.
-7) unrelated한 잡담/감정 표현이면 explicit_change=false로 두고 needs_redesign도 false로 두어라.
-8) explicit_change=true인 경우, 사용자의 요청을 요약해 redesign_request에 한국어 한 문장으로 담아라. 그렇지 않으면 null로 두어라.
+      [피드백 처리 원칙]
+      1) 피드백을 긍정적으로 수용하라.
+      2) 난이도/말투 변경 요청은 profile_update에 반영하라.
+      3) 학습 경로 자체의 변경(목표 변경, 주제 변경, 순서 변경)이 필요하면 needs_redesign=true로 설정하라.
+      4) 단순 난이도/스타일 조정은 needs_redesign 없이 처리하라.
+      5) response는 피드백 수용 + 수업 계속 안내를 포함하라.
+      6) 사용자가 명시적으로 목표/주제/순서 변경을 요청한 경우에만 explicit_change=true로 설정하라.
+      7) unrelated한 잡담/감정 표현이면 explicit_change=false로 두고 needs_redesign도 false로 두어라.
+      8) explicit_change=true인 경우, 사용자의 요청을 요약해 redesign_request에 한국어 한 문장으로 담아라. 그렇지 않으면 null로 두어라.
 
-[입력]
-$userText
+      [입력]
+      $userText
 
-[출력 규칙]
-- 반드시 JSON만 출력하라.
-- profile_update의 각 필드는 변경이 필요하면 값을 넣고, 없으면 null로 두어라.''';
+      [출력 규칙]
+      - 반드시 JSON만 출력하라.
+      - profile_update의 각 필드는 변경이 필요하면 값을 넣고, 없으면 null로 두어라.''';
   }
 
   String? _normalizeText(String? value) {
