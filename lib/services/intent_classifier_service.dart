@@ -51,7 +51,7 @@ class IntentClassifierService {
   }
 
   String _buildPrompt(String userText, String? previousTutorMessage) {
-    final contextSection = previousTutorMessage != null
+    final contextSection = (previousTutorMessage != null)
         ? '''
 [직전 대화 컨텍스트]
 Tutor: $previousTutorMessage

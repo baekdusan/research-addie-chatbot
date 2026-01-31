@@ -38,6 +38,8 @@ class FeedbackResult {
 }
 
 class ConversationalAgentService {
+  
+  // 학습 내 발화 시 수업 진행을 위한 대화용 프롬프트; 스트리밍 서비스에 쓰임; 학습자를 위한 앞단 프롬프트
   String buildTutorStreamingPrompt(
     LearningState state,
     String userText,
@@ -57,51 +59,44 @@ class ConversationalAgentService {
     }).join('\n');
 
     return '''너는 학습자를 돕는 친절하고 전문적인 튜터다.
-학습 로드맵을 참고하여 학습자의 흐름에 맞게 자연스럽게 수업을 진행하라.
+    학습 로드맵을 참고하여 학습자의 흐름에 맞게 자연스럽게 수업을 진행하라.
 
-[현재 학습 상태]
-- 주제(subject): ${profile.subject}
-- 목표(goal): ${profile.goal}
-- 수준(level): $level
-- 선호 말투(tone_preference): $toneDisplay
+    [현재 학습 상태]
+    - 주제(subject): ${profile.subject}
+    - 목표(goal): ${profile.goal}
+    - 수준(level): $level
+    - 선호 말투(tone_preference): $toneDisplay
 
-[학습 로드맵]
-$syllabusBlock
+    [학습 로드맵]
+    $syllabusBlock
 
-[최근 대화 요약]
-$historyBlock
+    [최근 대화 요약]
+    $historyBlock
 
-[튜터링 원칙]
-1) 정답을 먼저 말하지 마라. (비계 설정/Scaffolding)
-2) 사용자가 어렵다고 하면 더 쉬운 설명과 더 작은 예시로 내려가라.
-3) 이해 확인 질문은 필요할 때만 0~1개로 제한하라.
-4) 로드맵을 참고하되, 대화 흐름에 따라 유연하게 진행하라.
-5) 말투는 $toneForResponse에 맞춰라.
-6) tone_preference가 미정이면 기본적으로 kind 말투로 응답하라.
-7) 설명은 지나치게 짧지 않게 3~6문장 정도로 충분히 풀어라.
-8) 사용자가 "그냥 알려줘"라고 하면 질문 없이 설명만 하라.
-9) 로드맵의 모든 내용을 충분히 다뤘다고 판단되면, 학습 완료 여부를 자연스럽게 물어보라.
+    [튜터링 원칙]
+    1) 정답을 먼저 말하지 마라. (비계 설정/Scaffolding)
+    2) 사용자가 어렵다고 하면 더 쉬운 설명과 더 작은 예시로 내려가라.
+    3) 이해 확인 질문은 필요할 때만 0~1개로 제한하라.
+    4) 로드맵을 참고하되, 대화 흐름에 따라 유연하게 진행하라.
+    5) 말투는 $toneForResponse에 맞춰라.
+    6) tone_preference가 미정이면 기본적으로 kind 말투로 응답하라.
+    7) 설명은 지나치게 짧지 않게 3~6문장 정도로 충분히 풀어라.
+    8) 사용자가 "그냥 알려줘"라고 하면 질문 없이 설명만 하라.
+    9) 로드맵의 모든 내용을 충분히 다뤘다고 판단되면, 학습 완료 여부를 자연스럽게 물어보라.
 
-[입력]
-$userText
+    [입력]
+    $userText
 
-[출력 규칙]
-- 반드시 한국어 자연어로만 답하라.
-- JSON을 출력하지 마라.
-''';
+    [출력 규칙]
+    - 반드시 한국어 자연어로만 답하라.
+    - JSON을 출력하지 마라.
+    ''';
   }
 
   /// Analyst 모드: 사용자의 학습 정보를 수집하는 Micro-Agent
-  ///
-  /// 이 메서드는 "대화를 통한 정보 수집" 단계를 담당합니다.
-  /// LLM에게 사용자 발화를 분석시켜서:
-  /// 1. 명시적으로 언급된 정보만 추출 (추측 금지)
-  /// 2. 사용자에게 보여줄 자연스러운 응답 생성
-  /// 3. 필수 정보가 모두 모이면 "로드맵 설계 예고" 응답
-  ///
-  /// [state] 현재 학습 상태 (기존에 수집된 정보 포함)
-  /// [userText] 사용자의 현재 입력
-  /// Returns: 추출된 정보 + 사용자 응답을 담은 [AnalystResult]
+  
+  // 학습 외 발화 시 현재 상태를 통해 피드백을 반영하여 상태 업데이트
+  // _buildAnalystPrompt 이용하여 추가 정보를 채우기 위한 대화 진행
   Future<AnalystResult> runAnalyst(
     LearningState state,
     String userText,
@@ -245,6 +240,10 @@ $userText
     );
   }
 
+  // 학습 외 발화 시 현재 상태를 통해 피드백을 반영하여 상태 업데이트
+  // _buildFeedbackPrompt 이용하여
+  // 1. 단순한 피드백: State 변경
+  // 2. 재설계 요구시: needs_redesign=true만 설정 후 syllabus_designer에게 위임
   Future<FeedbackResult> runFeedback(
     LearningState state,
     String userText,
@@ -262,7 +261,10 @@ $userText
               description: '말투 변경 요청',
             ),
           },
-          optionalProperties: ['level', 'tone_preference'],
+          optionalProperties: [
+            'level',
+            'tone_preference'
+          ],
         ),
         'response': Schema.string(description: '피드백 수용 응답'),
         'needs_redesign': Schema.boolean(description: '재설계 필요 여부'),
@@ -313,6 +315,7 @@ $userText
     );
   }
 
+  // 추출된 정보를 바탕으로 빈 정보에 대해 추가 요청을 하기 대화용 프롬프트; 스트리밍 X; 학습자를 위한 앞단 프롬프트
   String _buildAnalystPrompt(LearningState state, String userText) {
     final profile = state.learnerProfile;
     final level = profile.level?.name ?? '미정';
@@ -352,7 +355,7 @@ $userText
     - response는 사용자에게 보여줄 자연스러운 한국어 한 문단이다.''';
   }
 
-  // 현재 상태와 학습자의 학습 외 발화를 통해 피드백을 반영
+  // 학습 외 발화 시 피드백을 처리하기 위한 상태 변경용 프롬프트
   String _buildFeedbackPrompt(LearningState state, String userText) {
     final profile = state.learnerProfile;
     final design = state.instructionalDesign;
@@ -402,5 +405,4 @@ $userText
     if (trimmed.toLowerCase() == 'null') return null;
     return trimmed;
   }
-
 }

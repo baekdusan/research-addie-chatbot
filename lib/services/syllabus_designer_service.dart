@@ -4,6 +4,8 @@ import '../models/learner_profile.dart';
 import '../models/instructional_design.dart';
 
 class SyllabusDesignerService {
+  
+  // _buildPrompt를 이용하여 syllabus를 생성하는 에이전트
   Future<List<Step>> generate(
     LearnerProfile profile, {
     String? redesignRequest,
@@ -52,6 +54,7 @@ class SyllabusDesignerService {
         .toList();
   }
 
+  // 초기 정보 or 재설계 요청이 들어왔을 때 syllabus를 생성하기 위한 프롬프트
   String _buildPrompt(
     LearnerProfile profile, {
     String? redesignRequest,
@@ -62,25 +65,25 @@ class SyllabusDesignerService {
         ? ''
         : '\n[재설계 요청]\n- $redesignRequest\n- 위 요청을 반드시 반영하라.';
     return '''너는 전문 교수설계자(Instructional Designer)다.
-학습자의 프로필을 바탕으로 '주제(subject)'를 마스터하여 '목표(goal)'에 도달할 수 있는 커리큘럼을 설계하라.
+    학습자의 프로필을 바탕으로 '주제(subject)'를 마스터하여 '목표(goal)'에 도달할 수 있는 커리큘럼을 설계하라.
 
-[입력 정보]
-- subject: ${profile.subject}
-- goal: ${profile.goal}
-- level: $level
-- tone_preference: $tone
-$redesignNote
+    [입력 정보]
+    - subject: ${profile.subject}
+    - goal: ${profile.goal}
+    - level: $level
+    - tone_preference: $tone
+    $redesignNote
 
-[설계 원칙]
-1) 단계는 1~5개로 구성하라.
-2) 주제가 매우 쉬우면 단계를 줄여도 된다.
-3) 불필요하게 길게 늘어뜨리지 말고 목표 달성에 필요한 최소 단계만 제시하라.
-4) 각 단계는 명확한 소주제(topic)와 구체적인 학습목표(objective)를 포함해야 한다.
-5) level에 맞게 난이도를 조절하라.
-6) 최종 단계는 goal과 직접 연결되어야 한다.
-7) 각 단계는 이전 단계의 지식을 기반으로 해야 한다.
+    [설계 원칙]
+    1) 단계는 1~5개로 구성하라.
+    2) 주제가 매우 쉬우면 단계를 줄여도 된다.
+    3) 불필요하게 길게 늘어뜨리지 말고 목표 달성에 필요한 최소 단계만 제시하라.
+    4) 각 단계는 명확한 소주제(topic)와 구체적인 학습목표(objective)를 포함해야 한다.
+    5) level에 맞게 난이도를 조절하라.
+    6) 최종 단계는 goal과 직접 연결되어야 한다.
+    7) 각 단계는 이전 단계의 지식을 기반으로 해야 한다.
 
-[출력 규칙]
-- 반드시 JSON만 출력하라.''';
+    [출력 규칙]
+    - 반드시 JSON만 출력하라.''';
   }
 }
