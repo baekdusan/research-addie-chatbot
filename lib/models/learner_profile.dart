@@ -32,7 +32,7 @@ class LearnerProfile {
   });
 
   bool get isMandatoryFilled {
-    return _isFilled(subject) && _isFilled(goal) && _isFilled(LearnerLevel) && _isFilled(tone);
+    return _isFilled(subject) && _isFilled(goal) && level != null && tonePreference != null;
   }
 
   bool _isFilled(String? value) {
