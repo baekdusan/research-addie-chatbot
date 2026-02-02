@@ -45,7 +45,7 @@ class InstructionalDesign {
     List<Step>? syllabus,
   }) : syllabus = syllabus ?? [];
 
-  bool get designFilled => syllabus.isNotEmpty;
+  bool get isDesignFilled => syllabus.isNotEmpty;
   int get totalSteps => syllabus.length;
 
   InstructionalDesign copyWith({

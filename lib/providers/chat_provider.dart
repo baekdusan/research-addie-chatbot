@@ -216,8 +216,8 @@ class ChatController extends _$ChatController {
     _log('turn.start', {
       'turn': _turnCounter,
       'text': text,
-      'mandatory': learning.learnerProfile.isMandatoryFilled,
-      'designFilled': learning.instructionalDesign.designFilled,
+      'mandatory': learning.learnerProfile.isLearnerProfileFilled,
+      'isDesignFilled': learning.instructionalDesign.isDesignFilled,
       'designing': learning.isDesigning,
       'designReady': learning.showDesignReady,
       'completed': learning.isCourseCompleted,
@@ -242,8 +242,8 @@ class ChatController extends _$ChatController {
     }
 
     // 3-3. 프로파일/설계 미완성 → Analyst로 정보 수집
-    final isReady = learning.learnerProfile.isMandatoryFilled &&
-        learning.instructionalDesign.designFilled;
+    final isReady = learning.learnerProfile.isLearnerProfileFilled &&
+        learning.instructionalDesign.isDesignFilled;
     if (!isReady) {
       await _runAnalystFlow(session.id, text, learning);
       return;
@@ -327,16 +327,16 @@ class ChatController extends _$ChatController {
     // 1. 상태 체크: 이미 준비됐으면 다른 Flow로 전환
     // ============================================================
     if (!forceAnalyst &&
-        previous.learnerProfile.isMandatoryFilled &&
-        previous.instructionalDesign.designFilled) {
+        previous.learnerProfile.isLearnerProfileFilled &&
+        previous.instructionalDesign.isDesignFilled) {
       await _runFeedbackFlow(sessionId, userText);
       return;
     }
 
     // 프로파일은 완성됐지만 설계가 안됐으면 → 설계 시작
     if (!forceAnalyst &&
-        previous.learnerProfile.isMandatoryFilled &&
-        !previous.instructionalDesign.designFilled) {
+        previous.learnerProfile.isLearnerProfileFilled &&
+        !previous.instructionalDesign.isDesignFilled) {
       _startSyllabusDesign(sessionId, isRedesign: false);
       return;
     }
@@ -393,10 +393,10 @@ class ChatController extends _$ChatController {
       // ============================================================
       // 5. 필수 정보 완성 체크 → 자동으로 커리큘럼 생성 시작
       // ============================================================
-      final wasMandatory = previous.learnerProfile.isMandatoryFilled;
+      final wasMandatory = previous.learnerProfile.isLearnerProfileFilled;
       final shouldTriggerDesign =
-          updated.learnerProfile.isMandatoryFilled &&
-          !updated.instructionalDesign.designFilled &&
+          updated.learnerProfile.isLearnerProfileFilled &&
+          !updated.instructionalDesign.isDesignFilled &&
           (forceAnalyst || !wasMandatory);
       if (shouldTriggerDesign) {
         _startSyllabusDesign(sessionId, isRedesign: false);

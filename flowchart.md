@@ -6,11 +6,11 @@
 
 ```mermaid
 flowchart TD
-    Start([사용자 Query]) --> ReadyCheck{isLearnerProfileFilled<br/>&& isDesignFilled?}
+    Start([사용자 Query]) --> ReadyCheck{isLearnerProfileFilled<br/>AND isDesignFilled?}
 
     %% 준비 안됨 경로
     ReadyCheck -->|false| Analyst[Analyst Agent<br/>정보 수집]
-    Analyst --> ProfileUpdate[프로파일 업데이트]
+    Analyst --> ProfileUpdate[LearnerProfile 업데이트]
     ProfileUpdate --> MandatoryCheck{isLearnerProfileFilled?}
     MandatoryCheck -->|true| DesignStart[Syllabus Designer<br/>커리큘럼 생성]
     MandatoryCheck -->|false| Response1([Analyst 응답 반환])
@@ -22,15 +22,15 @@ flowchart TD
     Tutor --> Response2([Tutor 응답 반환])
 
     IntentClassifier -->|outOfClass| Feedback[Feedback Agent<br/>피드백 처리]
-    Feedback --> RedesignCheck{needsRedesign<br/>&& explicitChange?}
+    Feedback --> RedesignCheck{needsRedesign<br/>AND explicitChange?}
     RedesignCheck -->|true| DesignStart
     RedesignCheck -->|false| ExplicitCheck{explicitChange<br/>== true?}
-    ExplicitCheck -->|true| ProfileUpdate2[프로파일 업데이트<br/>level/tone만]
+    ExplicitCheck -->|true| ProfileUpdate2["LearnerProfile 업데이트<br/>(level/tone만)"]
     ExplicitCheck -->|false| Response3([Feedback 응답 반환])
     ProfileUpdate2 --> Response3
 
     %% 설계 완료 후 자동 수업 시작
-    DesignStart --> DesignComplete[설계 완료<br/>isDesigning=false<br/>showDesignReady=true]
+    DesignStart --> DesignComplete[InstructionalDesign 업데이트]
     DesignComplete -->|자동 실행| Tutor
 
     %% 스타일링
@@ -63,12 +63,12 @@ classDiagram
         +String? goal
         +LearnerLevel? level
         +TonePreference? tonePreference
-        +bool isMandatoryFilled()
+        +bool isLearnerProfileFilled()
     }
 
     class InstructionalDesign {
         +List~Step~ syllabus
-        +bool designFilled()
+        +bool isDesignFilled()
         +int totalSteps()
     }
 
@@ -82,9 +82,9 @@ classDiagram
     LearningState --> InstructionalDesign
     InstructionalDesign --> Step
 
-    note for LearnerProfile "isMandatoryFilled = \nsubject != null &&\ngoal != null &&\nlevel != null &&\ntonePreference != null"
+    note for LearnerProfile "isLearnerProfileFilled = <br/>subject != null AND<br/>goal != null AND<br/>level != null AND<br/>tonePreference != null"
 
-    note for InstructionalDesign "designFilled = \nsyllabus.isNotEmpty"
+    note for InstructionalDesign "isDesignFilled = <br/>syllabus.isNotEmpty"
 ```
 
 ### 조건 플래그 계산 로직
@@ -93,36 +93,9 @@ classDiagram
 |--------|--------|------|------|
 | **isLearnerProfileFilled** | `subject != null && goal != null && level != null && tonePreference != null` | [learner_profile.dart:35](lib/models/learner_profile.dart#L35) | 학습자 프로필 4가지 필수 정보 모두 완성 |
 | **isDesignFilled** | `syllabus.isNotEmpty` | [instructional_design.dart:48](lib/models/instructional_design.dart#L48) | 커리큘럼(Syllabus) 생성 완료 |
-| **isDesigning** | 수동 설정 | [learning_state.dart:7](lib/models/learning_state.dart#L7) | 커리큘럼 생성 중 (중복 방지용) |
+| **isDesigning** | 수동 설정, true일 경우에 입력창 disabled | [learning_state.dart:7](lib/models/learning_state.dart#L7) | 커리큘럼 생성 중 (중복 방지용) |
 | **showDesignReady** | 수동 설정 | [learning_state.dart:8](lib/models/learning_state.dart#L8) | 설계 완료 UI 표시 플래그 |
 | **isCourseCompleted** | 수동 설정 | [learning_state.dart:9](lib/models/learning_state.dart#L9) | 학습 완료 여부 (새 학습 시작 판단용) |
-
-### State 변화 예시
-
-```
-초기 상태:
-  subject=null, goal=null, level=null, tone=null, syllabus=[]
-  → isLearnerProfileFilled=false, isDesignFilled=false
-
-턴1: "Python 배우고 싶어요"
-  subject=Python, goal=null, level=null, tone=null
-  → isLearnerProfileFilled=false (goal, level, tone 누락)
-
-턴2: "웹 개발하고 싶어요. 쉽게 설명해주세요"
-  subject=Python, goal=웹개발, level=beginner, tone=null
-  → isLearnerProfileFilled=false (tone 누락)
-
-턴3: "친절하게요"
-  subject=Python, goal=웹개발, level=beginner, tone=kind
-  → isLearnerProfileFilled=true ✅
-  → 커리큘럼 생성 시작 (isDesigning=true)
-
-턴4: (커리큘럼 생성 완료)
-  syllabus=[Step1, Step2, Step3, ...]
-  → isDesignFilled=true ✅
-  → isDesigning=false, showDesignReady=true
-  → 수업 시작 가능!
-```
 
 ---
 
@@ -130,19 +103,19 @@ classDiagram
 
 ```mermaid
 flowchart TD
-    Start([사용자 Query]) --> ReadyCheck{isLearnerProfileFilled<br/>&& isDesignFilled?}
+    Start([사용자 Query]) --> ReadyCheck{isLearnerProfileFilled<br/>AND isDesignFilled?}
 
     %% 준비 안됨 경로
     ReadyCheck -->|false| Analyst[Analyst Agent<br/>정보 수집]
-    Analyst --> ProfileUpdate[프로파일 업데이트]
+    Analyst --> ProfileUpdate[LearnerProfile 업데이트]
 
     %% 백그라운드 Web Search (subject 추출 시)
     ProfileUpdate --> SubjectCheck{subject<br/>!= null?}
-    SubjectCheck -->|true| DataCheck{web document != null?}
-    DataCheck -->|false| WebSearch[Web Search<br/>백그라운드 실행]
+    SubjectCheck -->|true| DataCheck{isResourceReady?}
+    DataCheck ---|false| WebSearch["Web Search<br/>(백그라운드 실행)"]
     DataCheck -->|true| MandatoryCheck
-    SubjectCheck --> Response1([Analyst 응답 반환])
-    WebSearch -.병렬 실행.-> ResourceCache[(자료 캐시<br/>학습자료+교수설계이론)]
+    SubjectCheck -->|false| Response1([Analyst 응답 반환])
+    WebSearch -.-> ResourceCache[(WebResourceCache)]
     WebSearch --> MandatoryCheck
 
     MandatoryCheck{isLearnerProfileFilled?}
@@ -156,18 +129,18 @@ flowchart TD
     Tutor --> Response2([Tutor 응답 반환])
 
     IntentClassifier -->|outOfClass| Feedback[Feedback Agent<br/>피드백 처리]
-    Feedback --> RedesignCheck{needsRedesign<br/>&& explicitChange?}
+    Feedback --> RedesignCheck{needsRedesign<br/>AND explicitChange?}
     RedesignCheck -->|true| DesignStart
     RedesignCheck -->|false| ExplicitCheck{explicitChange<br/>== true?}
-    ExplicitCheck -->|true| ProfileUpdate2[프로파일 업데이트<br/>level/tone만]
+    ExplicitCheck -->|true| ProfileUpdate2["LearnerProfile 업데이트<br/>(tone만)"]
     ExplicitCheck -->|false| Response3([Feedback 응답 반환])
     ProfileUpdate2 --> Response3
 
     %% 설계 시 캐시 활용
-    ResourceCache -.활용.-> DesignStart
+    ResourceCache --> DesignStart
 
     %% 설계 완료 후 자동 수업 시작
-    DesignStart --> DesignComplete[설계 완료<br/>isDesigning=false<br/>showDesignReady=true]
+    DesignStart --> DesignComplete[InstructionalDesign 업데이트]
     DesignComplete -->|자동 실행| Tutor
 
     %% 스타일링
@@ -205,12 +178,15 @@ classDiagram
         +String? goal
         +LearnerLevel? level
         +TonePreference? tonePreference
-        +bool isMandatoryFilled()
+        +bool isLearnerProfileFilled()
     }
 
     class InstructionalDesign {
+        +LearnerLevel targetLevel
         +List~Step~ syllabus
-        +bool designFilled()
+        +List~InstructionalTheory~ selectedTheories
+        +String pedagogicalRationale
+        +bool isDesignFilled()
         +int totalSteps()
     }
 
@@ -241,25 +217,23 @@ classDiagram
         +String objective
         +List~String~ keyPoints
         +List~LearningResource~ resources
-        +String instructionalApproach
-        +List~String~ practiceActivities
-        +String assessmentMethod
-        +Duration estimatedDuration
+        +String recommendedApproach
     }
 
     LearningState --> LearnerProfile
     LearningState --> InstructionalDesign
     LearningState --> WebResourceCache
     InstructionalDesign --> Step
+    InstructionalDesign --> InstructionalTheory
     Step --> LearningResource
     WebResourceCache --> LearningResource
     WebResourceCache --> InstructionalTheory
 
-    note for LearnerProfile "isMandatoryFilled = \nsubject != null &&\ngoal != null &&\nlevel != null &&\ntonePreference != null"
+    note for LearnerProfile "isLearnerProfileFilled = <br/>subject != null AND<br/>goal != null AND<br/>level != null AND<br/>tonePreference != null"
 
-    note for InstructionalDesign "designFilled = \nsyllabus.isNotEmpty"
+    note for InstructionalDesign "isDesignFilled = <br/>syllabus.isNotEmpty"
 
-    note for WebResourceCache "isResourceReady = \nlearningResources.isNotEmpty ||\ninstructionalTheories.isNotEmpty"
+    note for WebResourceCache "isResourceReady = <br/>learningResources.isNotEmpty AND <br/>instructionalTheories.isNotEmpty"
 ```
 
 ### 조건 플래그 계산 로직 (v2.0)
@@ -268,8 +242,8 @@ classDiagram
 |--------|--------|------|
 | **isLearnerProfileFilled** | `subject != null && goal != null && level != null && tonePreference != null` | 학습자 프로필 4가지 필수 정보 모두 완성 |
 | **isDesignFilled** | `syllabus.isNotEmpty` | 커리큘럼(Syllabus) 생성 완료 |
-| **isResourceReady** | `learningResources.isNotEmpty || instructionalTheories.isNotEmpty` | 웹 검색 자료 수집 완료 |
-| **isDesigning** | 수동 설정 | 커리큘럼 생성 중 (중복 방지용) |
+| **isResourceReady** | `learningResources.isNotEmpty && instructionalTheories.isNotEmpty` | 웹 검색 자료 수집 완료 |
+| **isDesigning** | 수동 설정, true일 경우에 입력창 disabled | 커리큘럼 생성 중 (중복 방지용) |
 | **showDesignReady** | 수동 설정 | 설계 완료 UI 표시 플래그 |
 | **isCourseCompleted** | 수동 설정 | 학습 완료 여부 (새 학습 시작 판단용) |
 
@@ -284,7 +258,7 @@ class WebResourceCache {
   final DateTime? lastFetchedAt;                  // 마지막 검색 시간
 
   bool get isResourceReady =>
-    learningResources.isNotEmpty || instructionalTheories.isNotEmpty;
+    learningResources.isNotEmpty && instructionalTheories.isNotEmpty;
 }
 ```
 
@@ -307,116 +281,67 @@ class InstructionalTheory {
 }
 ```
 
+#### InstructionalDesign (교수설계) - v2.0 개선
+```dart
+class InstructionalDesign {
+  final LearnerLevel targetLevel;                       // 이 커리큘럼의 대상 level
+  final List<Step> syllabus;                            // 학습 단계들
+  final List<InstructionalTheory> selectedTheories;     // 선택되고 적용된 교수설계 이론
+  final String pedagogicalRationale;                    // 왜 이 이론들을 선택했는지
+
+  bool get isDesignFilled => syllabus.isNotEmpty;
+  int get totalSteps => syllabus.length;
+}
+```
+
 #### Step (학습 단계) - v2.0 개선
 ```dart
 class Step {
   final int step;                            // 단계 번호
   final String topic;                        // 주제
-  final String objective;                    // 학습 목표
+  final String objective;                    // 학습 목표 (targetLevel에 맞게 설정됨)
 
   // v2.0에서 추가되는 필드들
-  final List<String> keyPoints;              // 핵심 학습 포인트
+  final List<String> keyPoints;              // 핵심 학습 포인트 (targetLevel에 맞는 깊이)
   final List<LearningResource> resources;    // 이 단계에 필요한 학습 자료
-  final String instructionalApproach;        // 적용할 교수법 (교수설계이론 활용)
-  final List<String> practiceActivities;     // 실습/연습 활동
-  final String assessmentMethod;             // 평가 방법
-  final Duration estimatedDuration;          // 예상 학습 시간
+  final String recommendedApproach;          // 이 단계에 권장되는 교수법
+                                             // 예: "Scaffolding - 이전 단계 복습 후 새 개념 도입"
 }
 ```
 
-**v1.0 vs v2.0 비교:**
+#### 역할 분리: Syllabus Designer vs Tutor Agent
 
-| 항목 | v1.0 | v2.0 |
-|------|------|------|
-| **기본 정보** | topic, objective | topic, objective |
-| **학습 내용** | ❌ | keyPoints (핵심 포인트) |
-| **학습 자료** | ❌ | resources (단계별 자료) |
-| **교수법** | ❌ | instructionalApproach (이론 적용) |
-| **실습** | ❌ | practiceActivities (활동 목록) |
-| **평가** | ❌ | assessmentMethod (평가 방법) |
-| **시간** | ❌ | estimatedDuration (예상 시간) |
+**Syllabus Designer의 역할 (설계):**
+1. `subject` + `goal` + `level` 분석
+2. `WebResourceCache`에서 교수설계 이론 후보 조회
+3. `targetLevel`에 맞는 교수설계 이론 선택 → `selectedTheories`
+4. 선택한 이론에 기반하여 커리큘럼 설계
+5. 각 `Step`에 `recommendedApproach` 명시
 
-### State 변화 예시 (v2.0)
+**Tutor Agent의 역할 (실행):**
+- **입력 정보**:
+  - `InstructionalDesign.selectedTheories`: 적용된 교수설계 이론
+  - `Step.recommendedApproach`: 단계별 권장 교수법
+  - `LearnerProfile.tonePreference`: 전달 스타일만
+- **동작**: 설계된 교수법대로 실행, 임의 판단 없음
+- **tone만 조정**: 같은 내용을 어떤 말투로 전달할지
 
-```
-초기 상태:
-  subject=null, goal=null, level=null, tone=null, syllabus=[]
-  webResourceCache.learningResources=[], webResourceCache.instructionalTheories=[]
-  → isLearnerProfileFilled=false, isDesignFilled=false, isResourceReady=false
-
-턴1: "Python 배우고 싶어요"
-  subject=Python, goal=null, level=null, tone=null
-  → 백그라운드 Web Search 시작 (병렬 실행)
-  → isLearnerProfileFilled=false (goal, level, tone 누락)
-
-턴1-백그라운드: Web Search 완료
-  webResourceCache.subject=Python
-  webResourceCache.learningResources=[
-    {title: "Python 공식 문서", url: "...", ...},
-    {title: "초보자를 위한 Python", url: "...", ...}
-  ]
-  webResourceCache.instructionalTheories=[
-    {theoryName: "Scaffolding", description: "...", ...}
-  ]
-  → isResourceReady=true ✅
-
-턴2: "웹 개발하고 싶어요. 쉽게 설명해주세요"
-  subject=Python, goal=웹개발, level=beginner, tone=null
-  → isLearnerProfileFilled=false (tone 누락)
-
-턴3: "친절하게요"
-  subject=Python, goal=웹개발, level=beginner, tone=kind
-  → isLearnerProfileFilled=true ✅
-  → 커리큘럼 생성 시작 (webResourceCache 활용)
-
-턴4: (커리큘럼 생성 완료 - 웹 자료 활용)
-  syllabus=[
-    Step {
-      step: 1,
-      topic: "Python 기초",
-      objective: "변수와 데이터 타입 이해하기",
-      keyPoints: [
-        "변수 선언과 할당 방법",
-        "int, float, str, bool 타입 이해",
-        "타입 변환 (type casting)"
-      ],
-      resources: [
-        LearningResource("Python 공식 문서 - 변수", "https://...", ...),
-        LearningResource("초보자를 위한 Python 변수 설명", "https://...", ...)
-      ],
-      instructionalApproach: "Scaffolding: 간단한 예제부터 점진적 확장",
-      practiceActivities: [
-        "자신의 이름과 나이를 저장하는 변수 만들기",
-        "숫자 타입 간 연산 실습"
-      ],
-      assessmentMethod: "실습 코드 작성 및 결과 확인",
-      estimatedDuration: Duration(minutes: 30)
-    },
-    Step {
-      step: 2,
-      topic: "제어문",
-      objective: "조건문과 반복문 활용하기",
-      keyPoints: [...],
-      resources: [...],
-      instructionalApproach: "Mastery Learning: 충분한 연습 후 다음 단계",
-      ...
-    },
-    ...
-  ]
-  → isDesignFilled=true ✅
-  → 수업 시작 가능! (각 단계마다 자료/활동/평가 준비 완료)
-```
+**이 접근의 장점:**
+1. **명확한 책임 분리**: Designer는 설계, Tutor는 실행만
+2. **일관성**: 수업 중 교수법이 임의로 바뀌지 않음
+3. **Token 효율**: Tutor는 `WebResourceCache` 접근 불필요, `InstructionalDesign`만 참조
+4. **Stateless 원칙**: LLM은 생성만, 판단은 Designer가
 
 ---
 
 ## 의사결정 노드 상세 설명
 
-### 1. `isMandatoryFilled && designFilled?`
+### 1. `isLearnerProfileFilled && isDesignFilled?`
 - **위치**: [chat_provider.dart:245-246](lib/providers/chat_provider.dart#L245-L246)
-- **로직**: `learning.learnerProfile.isMandatoryFilled && learning.instructionalDesign.designFilled`
+- **로직**: `learning.learnerProfile.isLearnerProfileFilled && learning.instructionalDesign.isDesignFilled`
 - **조건**:
-  - `isMandatoryFilled`: `subject != null && goal != null`
-  - `designFilled`: `syllabus.isNotEmpty`
+  - `isLearnerProfileFilled`: `subject != null && goal != null && level != null && tonePreference != null`
+  - `isDesignFilled`: `syllabus.isNotEmpty`
 - **true**: 수업 가능 상태 → Intent 분류
 - **false**: 정보 수집 필요 → Analyst Flow
 
@@ -427,12 +352,12 @@ class Step {
 - **true**: 백그라운드 Web Search 실행 (병렬) → 필수 정보 체크로 이동
 - **false**: subject 추출 안됨 → 필수 정보 체크로 이동
 
-### 3. `subject && goal && level && tone?`
+### 3. `isLearnerProfileFilled?`
 - **위치**: [chat_provider.dart:396-400](lib/providers/chat_provider.dart#L396-L400) (Analyst Flow 내부)
-- **로직**: `updated.learnerProfile.isMandatoryFilled && !updated.instructionalDesign.designFilled && (forceAnalyst || !wasMandatory)`
+- **로직**: `updated.learnerProfile.isLearnerProfileFilled && !updated.instructionalDesign.isDesignFilled && (forceAnalyst || !wasMandatory)`
 - **실제 조건**: [learner_profile.dart:35](lib/models/learner_profile.dart#L35)
   ```dart
-  isMandatoryFilled = subject != null && goal != null && level != null && tonePreference != null
+  isLearnerProfileFilled = subject != null && goal != null && level != null && tonePreference != null
   ```
 - **목적**: 4가지 필수 정보 모두 완성 시 커리큘럼 생성 시작
 - **true**: 모든 정보 완성 → Syllabus Designer 시작
@@ -454,10 +379,19 @@ class Step {
 - **위치**: [chat_provider.dart:585](lib/providers/chat_provider.dart#L585) (Feedback Flow 내부)
 - **로직**: `result.needsRedesign && result.explicitChange`
 - **조건**:
-  - `needsRedesign`: 재설계가 필요한지 Feedback Agent가 판단
+  - `needsRedesign`: **subject/goal/level 변경**으로 재설계가 필요한지 Feedback Agent가 판단
   - `explicitChange`: 명시적 변경 요청인지 (추측 방지)
 - **true**: 커리큘럼 재생성
 - **false**: 명시적 변경 체크로 이동
+- **재설계 대상**:
+  - **v1.0**: subject, goal 변경
+  - **v2.0**: subject, goal, **level** 변경
+    - subject 변경: "Python → JavaScript로 바꿔주세요"
+    - goal 변경: "웹개발 → 데이터분석으로 바꿔주세요"
+    - level 변경: "초보자 수준으로 다시 설명해주세요" (커리큘럼 순서/깊이 변경 필요)
+    - 순서 변경: "변수를 먼저 배우고 싶어요"
+- **재설계 제외**:
+  - tone 변경: Tutor가 실시간 반영 (말투만 변경, 커리큘럼 무관)
 - **오판 케이스**: `needsRedesign=true && explicitChange=false`는 LLM 오판으로 간주하여 무시 ([chat_provider.dart:602-605](lib/providers/chat_provider.dart#L602-L605))
   - 예: "이거 너무 어려운데요?" → LLM이 재설계 필요하다고 착각할 수 있음
 
@@ -465,10 +399,14 @@ class Step {
 - **위치**: [chat_provider.dart:573](lib/providers/chat_provider.dart#L573) (Feedback Flow 내부)
 - **로직**: `result.explicitChange`
 - **목적**: 명시적 변경 요청만 프로파일 업데이트 (추측 방지)
-- **true**: level/tone 업데이트 후 Feedback 응답 반환
+- **true**: **tone 업데이트** 후 Feedback 응답 반환 (재설계 없음)
 - **false**: 잡담/감정 표현으로 간주, Feedback 응답만 반환
+- **v2.0에서의 처리**:
+  - tone만 변경: LearnerProfile 업데이트, Tutor가 다음 턴부터 새 tone으로 수업
+  - level 변경: `needsRedesign`으로 처리 (재설계 필요)
 - **예시**:
-  - "쉽게 설명해주세요" → explicitChange=true → level 변경
+  - "격식있게 말해주세요" → explicitChange=true, needsRedesign=false → tone 변경 → ProfileUpdate2
+  - "초보자 수준으로 바꿔주세요" → explicitChange=true, needsRedesign=true → level 변경 → 재설계
   - "고마워요!" → explicitChange=false → 응답만 반환
 
 ---
@@ -485,20 +423,28 @@ class Step {
 
 ### Feedback Agent의 3가지 역할
 
-#### 1. 난이도/말투 변경 처리
+#### 1. 말투 변경 처리 (v2.0)
 ```
-사용자: "너무 어려워요. 쉽게 설명해주세요."
+사용자: "격식있게 말해주세요."
 → explicitChange: true
-→ level: expert → beginner
-→ 응답: "알겠어요. 좀 더 쉽게 설명할게요."
+→ needsRedesign: false
+→ tone: kind → formal
+→ 응답: "알겠습니다. 격식있게 말씀드리겠습니다."
 ```
 
 #### 2. 재설계 요청 감지 및 위임
 ```
+v1.0 - subject/goal 변경:
 사용자: "순서를 바꿔주세요. 변수를 먼저 배우고 싶어요."
 → needsRedesign: true
 → explicitChange: true
-→ redesignRequest: "변수를 먼저 배우고 싶다"
+→ Syllabus Designer에 재설계 위임
+
+v2.0 - subject/goal/level 변경:
+사용자: "초보자 수준으로 다시 가르쳐주세요."
+→ needsRedesign: true (커리큘럼 순서/깊이 변경 필요)
+→ explicitChange: true
+→ level: intermediate → beginner
 → Syllabus Designer에 재설계 위임
 ```
 

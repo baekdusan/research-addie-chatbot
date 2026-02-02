@@ -45,7 +45,7 @@ class LearningStateNotifier extends _$LearningStateNotifier {
     );
 
     final resetDesign =
-        (subjectChanged || goalChanged) && current.instructionalDesign.designFilled;
+        (subjectChanged || goalChanged) && current.instructionalDesign.isDesignFilled;
     final updatedDesign = resetDesign
         ? InstructionalDesign.empty()
         : current.instructionalDesign;
@@ -60,7 +60,7 @@ class LearningStateNotifier extends _$LearningStateNotifier {
     );
 
     debugPrint(
-      '[State] flags\nmandatory=${state.learnerProfile.isMandatoryFilled}\ndesignFilled=${state.instructionalDesign.designFilled}\ndesigning=${state.isDesigning}\ncompleted=${state.isCourseCompleted}',
+      '[State] flags\nmandatory=${state.learnerProfile.isLearnerProfileFilled}\nisDesignFilled=${state.instructionalDesign.isDesignFilled}\ndesigning=${state.isDesigning}\ncompleted=${state.isCourseCompleted}',
     );
 
     await _saveToPrefs();

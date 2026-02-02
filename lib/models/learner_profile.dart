@@ -31,7 +31,7 @@ class LearnerProfile {
     this.tonePreference,
   });
 
-  bool get isMandatoryFilled {
+  bool get isLearnerProfileFilled {
     return _isFilled(subject) && _isFilled(goal) && level != null && tonePreference != null;
   }
 
