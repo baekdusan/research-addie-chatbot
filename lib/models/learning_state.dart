@@ -1,9 +1,11 @@
 import 'learner_profile.dart';
 import 'instructional_design.dart';
+import 'resource_cache.dart';
 
 class LearningState {
   final LearnerProfile learnerProfile;
   final InstructionalDesign instructionalDesign;
+  final ResourceCache resourceCache;
   final bool isDesigning;
   final bool showDesignReady;
   final bool isCourseCompleted;
@@ -12,15 +14,18 @@ class LearningState {
   LearningState({
     required this.learnerProfile,
     required this.instructionalDesign,
+    ResourceCache? resourceCache,
     this.isDesigning = false,
     this.showDesignReady = false,
     this.isCourseCompleted = false,
     DateTime? updatedAt,
-  }) : updatedAt = updatedAt ?? DateTime.now();
+  })  : resourceCache = resourceCache ?? ResourceCache.empty(),
+        updatedAt = updatedAt ?? DateTime.now();
 
   LearningState copyWith({
     LearnerProfile? learnerProfile,
     InstructionalDesign? instructionalDesign,
+    ResourceCache? resourceCache,
     bool? isDesigning,
     bool? showDesignReady,
     bool? isCourseCompleted,
@@ -29,6 +34,7 @@ class LearningState {
     return LearningState(
       learnerProfile: learnerProfile ?? this.learnerProfile,
       instructionalDesign: instructionalDesign ?? this.instructionalDesign,
+      resourceCache: resourceCache ?? this.resourceCache,
       isDesigning: isDesigning ?? this.isDesigning,
       showDesignReady: showDesignReady ?? this.showDesignReady,
       isCourseCompleted: isCourseCompleted ?? this.isCourseCompleted,
@@ -40,6 +46,7 @@ class LearningState {
     return {
       'learnerProfile': learnerProfile.toJson(),
       'instructionalDesign': instructionalDesign.toJson(),
+      'resourceCache': resourceCache.toJson(),
       'isDesigning': isDesigning,
       'showDesignReady': showDesignReady,
       'isCourseCompleted': isCourseCompleted,
@@ -54,6 +61,9 @@ class LearningState {
       instructionalDesign: InstructionalDesign.fromJson(
         json['instructionalDesign'] as Map<String, dynamic>,
       ),
+      resourceCache: json['resourceCache'] != null
+          ? ResourceCache.fromJson(json['resourceCache'] as Map<String, dynamic>)
+          : ResourceCache.empty(),
       isDesigning: json['isDesigning'] as bool? ?? false,
       showDesignReady: json['showDesignReady'] as bool? ?? false,
       isCourseCompleted: json['isCourseCompleted'] as bool? ?? false,

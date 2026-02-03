@@ -32,15 +32,20 @@ class _ChatInputState extends State<ChatInput> {
   /// 공백만 있는 경우 무시하고, 유효한 텍스트가 있으면
   /// [ChatController.sendMessage]를 호출한 뒤 입력 필드를 초기화한다.
   void _submit(WidgetRef ref) {
-    final isDesigning = ref.read(learningStateNotifierProvider).isDesigning;
+    if (!mounted) return;
+    final isDesigning = ref.read(learningStateProvider).isDesigning;
     if (isDesigning) return;
+
     final text = _controller.text.trim();
-    if (text.isNotEmpty) {
-      ref.read(chatControllerProvider.notifier).sendMessage(text);
+    if (text.isEmpty) return;
+
+    ref.read(chatControllerProvider.notifier).sendMessage(text);
+
+    // TextField 초기화 (mounted 체크 후)
+    if (mounted) {
       _controller.clear();
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        if (_focusNode.canRequestFocus) {
+        if (mounted && _focusNode.canRequestFocus) {
           _focusNode.requestFocus();
         }
       });
@@ -59,7 +64,7 @@ class _ChatInputState extends State<ChatInput> {
             child: Consumer(
               builder: (context, ref, child) {
                 final isDesigning = ref
-                    .watch(learningStateNotifierProvider)
+                    .watch(learningStateProvider)
                     .isDesigning;
                 final theme = Theme.of(context);
 
@@ -78,22 +83,14 @@ class _ChatInputState extends State<ChatInput> {
                   child: Row(
                     children: [
                       Expanded(
-                        child: Focus(
-                          onKeyEvent: (node, event) {
-                            // Enter 키 눌렀을 때만 처리 (keydown 이벤트)
-                            if (event is KeyDownEvent &&
-                                event.logicalKey == LogicalKeyboardKey.enter) {
-                              // Shift 키가 눌려있지 않으면 전송
-                              if (!HardwareKeyboard.instance.isShiftPressed) {
-                                if (!isDesigning) {
-                                  _submit(ref);
-                                }
-                                return KeyEventResult.handled;
+                        child: CallbackShortcuts(
+                          bindings: {
+                            const SingleActivator(LogicalKeyboardKey.enter):
+                                () {
+                              if (mounted && !isDesigning) {
+                                _submit(ref);
                               }
-                              // Shift + Enter는 줄바꿈 (기본 동작)
-                              return KeyEventResult.ignored;
-                            }
-                            return KeyEventResult.ignored;
+                            },
                           },
                           child: TextField(
                             controller: _controller,
@@ -101,6 +98,7 @@ class _ChatInputState extends State<ChatInput> {
                             autofocus: true,
                             maxLines: null,
                             minLines: 1,
+                            keyboardType: TextInputType.multiline,
                             decoration: InputDecoration(
                               hintText: 'Type a message...',
                               hintStyle: TextStyle(

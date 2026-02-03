@@ -247,6 +247,7 @@ class ConversationalAgentService {
   Future<FeedbackResult> runFeedback(
     LearningState state,
     String userText,
+    List<String> history,
   ) async {
     final schema = Schema.object(
       properties: {
@@ -285,7 +286,7 @@ class ConversationalAgentService {
       ),
     );
 
-    final prompt = _buildFeedbackPrompt(state, userText);
+    final prompt = _buildFeedbackPrompt(state, userText, history);
     final response = await model.generateContent([Content.text(prompt)]);
     final raw = response.text;
     if (raw == null || raw.isEmpty) {
@@ -320,7 +321,7 @@ class ConversationalAgentService {
     final profile = state.learnerProfile;
     final level = profile.level?.name ?? '미정';
     final tone = profile.tonePreference?.name ?? '미정';
-    return '''너는 학습자의 정보를 수집하는 친절한 인터뷰어다.
+    return '''너는 학습자의 정보를 수집하는 친절한 튜터다.
     자연스러운 대화를 통해 학습자의 학습 주제(subject), 목표(goal), 수준(level), 선호 말투(tone_preference)를 파악하라.
 
     [수집할 정보]
@@ -330,14 +331,16 @@ class ConversationalAgentService {
     - tone_preference: kind/formal/casual 중 하나
 
     [대화 원칙]
-    2) 이미 파악된 정보는 다시 묻지 마라.
-    3) 사용자가 이미 답한 정보는 extracted_info에 반드시 반영하라.
-    4) 필수 정보(subject, goal, level, tone_preference)가 모두 파악되면:
+    1) 이미 파악된 정보는 다시 묻지 마라.
+    2) 사용자가 이미 답한 정보는 extracted_info에 반드시 반영하라.
+    3) 필수 정보(subject, goal, level, tone_preference)가 모두 파악되면:
       - 사용자에게 "로드맵(학습 계획)을 만들겠다"고 안내하라.
       - 추가 질문은 하지 마라.
-    5) 현재 정보가 '미정'이면 그 정보를 얻기 위한 질문을 우선하라.
-    6) 사용자가 명시적으로 언급하지 않은 값은 절대 추측하지 말고 null로 두어라.
-    7) explicit_fields에 true로 표시된 항목만 extracted_info에 값을 채우고, 나머지는 null로 두어라.
+    4) 현재 정보가 '미정'이면 그 정보를 얻기 위한 질문을 우선하라.
+    5) 사용자가 명시적으로 언급하지 않은 값은 절대 추측하지 말고 null로 두어라.
+    6) explicit_fields에 true로 표시된 항목만 extracted_info에 값을 채우고, 나머지는 null로 두어라.
+    7) response에는 사용자가 이번 발화에서 명시적으로 언급한 정보만 언급하라.
+    8) 사용자가 말하지 않은 정보를 마치 알고 있는 것처럼 응답하지 마라.
 
     [현재까지 파악된 정보]
     - subject: ${profile.subject}
@@ -356,11 +359,12 @@ class ConversationalAgentService {
   }
 
   // 학습 외 발화 시 피드백을 처리하기 위한 상태 변경용 프롬프트
-  String _buildFeedbackPrompt(LearningState state, String userText) {
+  String _buildFeedbackPrompt(LearningState state, String userText, List<String> history) {
     final profile = state.learnerProfile;
     final design = state.instructionalDesign;
     final level = profile.level?.name ?? '미정';
     final tone = profile.tonePreference?.name ?? '미정';
+    final historyBlock = history.isEmpty ? '없음' : history.join('\n');
 
     final syllabusBlock = design.syllabus.asMap().entries.map((e) {
       final idx = e.key + 1;
@@ -379,6 +383,9 @@ class ConversationalAgentService {
 
       [학습 로드맵]
       $syllabusBlock
+
+      [최근 대화 요약]
+      $historyBlock
 
       [피드백 처리 원칙]
       1) 피드백을 긍정적으로 수용하라.
