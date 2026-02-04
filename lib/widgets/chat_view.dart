@@ -375,7 +375,89 @@ class _ChatViewState extends ConsumerState<ChatView> {
                     ),
                   ),
                 ],
+                // Raw sources 섹션
+                if (theory.rawChunks != null && theory.rawChunks!.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _buildRawSourcesSection(theme, theory.rawChunks!),
+                ],
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRawSourcesSection(ThemeData theme, List<SourceChunk> chunks) {
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(top: 8),
+      leading: Icon(
+        Icons.source,
+        size: 16,
+        color: theme.colorScheme.secondary,
+      ),
+      title: Text(
+        '원문 보기 (${chunks.length}개)',
+        style: theme.textTheme.labelMedium?.copyWith(
+          color: theme.colorScheme.secondary,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      children: chunks.map((chunk) => _buildSourceChunkCard(theme, chunk)).toList(),
+    );
+  }
+
+  Widget _buildSourceChunkCard(ThemeData theme, SourceChunk chunk) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.description_outlined,
+                size: 14,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'p.${chunk.pageNumber}',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (chunk.sectionHeader != null) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    chunk.sectionHeader!,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontStyle: FontStyle.italic,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            chunk.content,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurface,
+              height: 1.5,
             ),
           ),
         ],

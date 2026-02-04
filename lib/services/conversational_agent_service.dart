@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:firebase_ai/firebase_ai.dart';
 import '../models/learning_state.dart';
 import '../models/learner_profile.dart';
+import '../models/resource_cache.dart';
 
 class AnalystResult {
   final String response;
@@ -47,6 +48,7 @@ class ConversationalAgentService {
   ) {
     final profile = state.learnerProfile;
     final design = state.instructionalDesign;
+    final cache = state.resourceCache;
     final level = profile.level?.name ?? '미정';
     final toneDisplay = profile.tonePreference?.name ?? '미정';
     final toneForResponse = profile.tonePreference?.name ?? 'kind';
@@ -57,6 +59,8 @@ class ConversationalAgentService {
       final step = e.value;
       return '$idx. ${step.topic} - ${step.objective}';
     }).join('\n');
+
+    final resourcesBlock = _buildTutorResourcesBlock(cache);
 
     return '''너는 학습자를 돕는 친절하고 전문적인 튜터다.
     학습 로드맵을 참고하여 학습자의 흐름에 맞게 자연스럽게 수업을 진행하라.
@@ -73,6 +77,8 @@ class ConversationalAgentService {
     [최근 대화 요약]
     $historyBlock
 
+    $resourcesBlock
+
     [튜터링 원칙]
     1) 정답을 먼저 말하지 마라. (비계 설정/Scaffolding)
     2) 사용자가 어렵다고 하면 더 쉬운 설명과 더 작은 예시로 내려가라.
@@ -83,6 +89,8 @@ class ConversationalAgentService {
     7) 설명은 지나치게 짧지 않게 3~6문장 정도로 충분히 풀어라.
     8) 사용자가 "그냥 알려줘"라고 하면 질문 없이 설명만 하라.
     9) 로드맵의 모든 내용을 충분히 다뤘다고 판단되면, 학습 완료 여부를 자연스럽게 물어보라.
+    10) 참고 자료를 활용할 때는 반드시 URL 링크를 함께 제공하라.
+    11) 교수설계 이론을 적용하여 효과적으로 학습을 안내하라.
 
     [입력]
     $userText
@@ -91,6 +99,39 @@ class ConversationalAgentService {
     - 반드시 한국어 자연어로만 답하라.
     - JSON을 출력하지 마라.
     ''';
+  }
+
+  /// Tutor 프롬프트에 포함할 리소스 블록 생성
+  String _buildTutorResourcesBlock(ResourceCache cache) {
+    if (!cache.isResourceReady) return '';
+
+    final buffer = StringBuffer();
+    buffer.writeln('\n[참고 자료]');
+
+    // Wikidata 학습 자료 (최대 3개로 제한 - 토큰 효율)
+    if (cache.learningResources.isNotEmpty) {
+      buffer.writeln('## 학습 자료 (설명에 활용 가능)');
+      final limitedResources = cache.learningResources.take(3);
+      for (final resource in limitedResources) {
+        buffer.writeln('- ${resource.title}');
+        buffer.writeln('  요약: ${resource.summary}');
+        buffer.writeln('  링크: ${resource.url}');
+      }
+      buffer.writeln();
+    }
+
+    // 교수설계 이론 (이름만 나열 - 토큰 절약)
+    if (cache.instructionalTheories.isNotEmpty) {
+      buffer.writeln('## 적용 중인 교수설계 이론');
+      final theoryNames = cache.instructionalTheories
+          .map((t) => t.theoryName)
+          .take(5)
+          .join(', ');
+      buffer.writeln('- $theoryNames');
+      buffer.writeln('(이 이론들을 참고하여 효과적인 학습 경험을 제공하라)');
+    }
+
+    return buffer.toString();
   }
 
   /// Analyst 모드: 사용자의 학습 정보를 수집하는 Micro-Agent
@@ -321,7 +362,7 @@ class ConversationalAgentService {
     final profile = state.learnerProfile;
     final level = profile.level?.name ?? '미정';
     final tone = profile.tonePreference?.name ?? '미정';
-    return '''너는 학습자의 정보를 수집하는 친절한 튜터다.
+    return '''너는 학습자의 정보를 수집하는 튜터다.
     자연스러운 대화를 통해 학습자의 학습 주제(subject), 목표(goal), 수준(level), 선호 말투(tone_preference)를 파악하라.
 
     [수집할 정보]

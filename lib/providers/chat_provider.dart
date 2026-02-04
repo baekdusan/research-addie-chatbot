@@ -742,6 +742,7 @@ class ChatController extends _$ChatController {
               'topic': step.topic,
               'objective': step.objective,
             }).toList(),
+            'theories': theories.map((t) => t.toJson()).toList(),
           },
         );
 
@@ -902,11 +903,19 @@ class ChatController extends _$ChatController {
     // RAG 청크를 InstructionalTheory 형태로 임시 저장
     // (실제 정제된 theories는 SyllabusDesigner가 생성)
     final instructionalTheories = ragChunks
-        .map((chunk) => InstructionalTheory(
-              theoryName: chunk.sectionHeader ?? 'Theory',
-              description: chunk.content,
-              applicability: '',
-            ))
+        .map((chunk) {
+          final sourceChunk = SourceChunk(
+            pageNumber: chunk.pageNumber,
+            sectionHeader: chunk.sectionHeader,
+            content: chunk.content,
+          );
+          return InstructionalTheory(
+            theoryName: chunk.sectionHeader ?? 'Theory',
+            description: chunk.content,
+            applicability: '',
+            rawChunks: [sourceChunk],
+          );
+        })
         .toList();
 
     // 캐시 저장

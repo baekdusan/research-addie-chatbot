@@ -80,16 +80,27 @@ class SyllabusDesignerService {
 
     // theories 파싱
     final theoriesList = data['theories'] as List?;
-    final theories = (theoriesList ?? [])
-        .map((item) {
-          final m = item as Map<String, dynamic>;
-          return InstructionalTheory(
-            theoryName: m['theoryName'] as String? ?? 'Unknown Theory',
-            description: m['description'] as String? ?? '',
-            applicability: m['applicability'] as String? ?? '',
-          );
-        })
-        .toList();
+    final inputTheories = resourceCache?.instructionalTheories ?? [];
+
+    // 모든 input theories의 raw chunks를 합침
+    final allRawChunks = <SourceChunk>[];
+    for (final theory in inputTheories) {
+      if (theory.rawChunks != null) {
+        allRawChunks.addAll(theory.rawChunks!);
+      }
+    }
+
+    final theories = (theoriesList ?? []).map((item) {
+      final m = item as Map<String, dynamic>;
+      final theoryName = m['theoryName'] as String? ?? 'Unknown Theory';
+
+      return InstructionalTheory(
+        theoryName: theoryName,
+        description: m['description'] as String? ?? '',
+        applicability: m['applicability'] as String? ?? '',
+        rawChunks: allRawChunks.isNotEmpty ? allRawChunks : null,
+      );
+    }).toList();
 
     return (syllabus: syllabus, theories: theories);
   }

@@ -99,7 +99,7 @@ classDiagram
 
 ---
 
-### 향후 버전 (v2.0 - Web Search 추가 예정)
+### 현재 버전 (v2.0 - Wikidata + RAG 통합)
 
 ```mermaid
 flowchart TD
@@ -109,23 +109,23 @@ flowchart TD
     ReadyCheck -->|false| Analyst[Analyst Agent<br/>정보 수집]
     Analyst --> ProfileUpdate[LearnerProfile 업데이트]
 
-    %% 백그라운드 Web Search (subject 추출 시)
+    %% 백그라운드 리소스 수집 (subject 추출 시)
     ProfileUpdate --> SubjectCheck{subject<br/>!= null?}
     SubjectCheck -->|true| DataCheck{isResourceReady?}
-    DataCheck ---|false| WebSearch["Web Search<br/>(백그라운드 실행)"]
+    DataCheck ---|false| ResourceFetch["Wikidata + RAG Fetch<br/>(백그라운드 실행)"]
     DataCheck -->|true| MandatoryCheck
     SubjectCheck -->|false| Response1([Analyst 응답 반환])
-    WebSearch -.-> ResourceCache[(WebResourceCache)]
-    WebSearch --> MandatoryCheck
+    ResourceFetch -.-> ResourceCache[(ResourceCache)]
+    ResourceFetch --> MandatoryCheck
 
     MandatoryCheck{isLearnerProfileFilled?}
-    MandatoryCheck -->|true| DesignStart[Syllabus Designer<br/>커리큘럼 생성]
+    MandatoryCheck -->|true| DesignStart[Syllabus Designer<br/>syllabus + theories 생성]
     MandatoryCheck -->|false| Response1
 
     %% 준비됨 경로
     ReadyCheck -->|true| IntentClassifier[Intent Classifier<br/>의도 분류]
 
-    IntentClassifier -->|inClass| Tutor[Tutor Agent<br/>스트리밍 수업]
+    IntentClassifier -->|inClass| Tutor[Tutor Agent<br/>스트리밍 수업 + 리소스 참고]
     Tutor --> Response2([Tutor 응답 반환])
 
     IntentClassifier -->|outOfClass| Feedback[Feedback Agent<br/>피드백 처리]
@@ -136,11 +136,13 @@ flowchart TD
     ExplicitCheck -->|false| Response3([Feedback 응답 반환])
     ProfileUpdate2 --> Response3
 
-    %% 설계 시 캐시 활용
-    ResourceCache --> DesignStart
+    %% 설계 시 캐시 활용 (입력: RAG theories)
+    ResourceCache -->|입력: RAG theories| DesignStart
+    ResourceCache -.-> Tutor
 
-    %% 설계 완료 후 자동 수업 시작
-    DesignStart --> DesignComplete[InstructionalDesign 업데이트]
+    %% 설계 완료 후 상태 업데이트 (출력: 적용된 theories)
+    DesignStart -->|syllabus| DesignComplete[InstructionalDesign 업데이트]
+    DesignStart -->|theories| ResourceCache
     DesignComplete -->|자동 실행| Tutor
 
     %% 스타일링
@@ -153,20 +155,20 @@ flowchart TD
     class ReadyCheck,MandatoryCheck,RedesignCheck,DataCheck,SubjectCheck,ExplicitCheck decisionStyle
     class Analyst,IntentClassifier,Tutor,Feedback,DesignStart processStyle
     class Start,Response1,Response2,Response3,ProfileUpdate,ProfileUpdate2,DesignComplete stateStyle
-    class WebSearch backgroundStyle
+    class ResourceFetch backgroundStyle
     class ResourceCache cacheStyle
 ```
 
 ---
 
-## State 구조 및 조건 플래그 (v2.0 - Web Search 추가)
+## State 구조 및 조건 플래그 (v2.0 - Wikidata + RAG 통합)
 
 ```mermaid
 classDiagram
     class LearningState {
         +LearnerProfile learnerProfile
         +InstructionalDesign instructionalDesign
-        +WebResourceCache webResourceCache
+        +ResourceCache resourceCache
         +bool isDesigning
         +bool showDesignReady
         +bool isCourseCompleted
@@ -182,16 +184,14 @@ classDiagram
     }
 
     class InstructionalDesign {
-        +LearnerLevel targetLevel
         +List~Step~ syllabus
-        +List~InstructionalTheory~ selectedTheories
-        +String pedagogicalRationale
         +bool isDesignFilled()
         +int totalSteps()
     }
 
-    class WebResourceCache {
+    class ResourceCache {
         +String? subject
+        +String sourceId
         +List~LearningResource~ learningResources
         +List~InstructionalTheory~ instructionalTheories
         +DateTime? lastFetchedAt
@@ -209,31 +209,34 @@ classDiagram
         +String theoryName
         +String description
         +String applicability
+        +List~SourceChunk~? rawChunks
+    }
+
+    class SourceChunk {
+        +int pageNumber
+        +String? sectionHeader
+        +String content
     }
 
     class Step {
         +int step
         +String topic
         +String objective
-        +List~String~ keyPoints
-        +List~LearningResource~ resources
-        +String recommendedApproach
     }
 
     LearningState --> LearnerProfile
     LearningState --> InstructionalDesign
-    LearningState --> WebResourceCache
+    LearningState --> ResourceCache
     InstructionalDesign --> Step
-    InstructionalDesign --> InstructionalTheory
-    Step --> LearningResource
-    WebResourceCache --> LearningResource
-    WebResourceCache --> InstructionalTheory
+    ResourceCache --> LearningResource
+    ResourceCache --> InstructionalTheory
+    InstructionalTheory --> SourceChunk
 
     note for LearnerProfile "isLearnerProfileFilled = <br/>subject != null AND<br/>goal != null AND<br/>level != null AND<br/>tonePreference != null"
 
     note for InstructionalDesign "isDesignFilled = <br/>syllabus.isNotEmpty"
 
-    note for WebResourceCache "isResourceReady = <br/>learningResources.isNotEmpty AND <br/>instructionalTheories.isNotEmpty"
+    note for ResourceCache "isResourceReady = <br/>learningResources.isNotEmpty AND <br/>instructionalTheories.isNotEmpty<br/><br/>instructionalTheories는<br/>RAG 입력 → Designer 출력으로<br/>2단계 변환됨"
 ```
 
 ### 조건 플래그 계산 로직 (v2.0)
@@ -242,19 +245,20 @@ classDiagram
 |--------|--------|------|
 | **isLearnerProfileFilled** | `subject != null && goal != null && level != null && tonePreference != null` | 학습자 프로필 4가지 필수 정보 모두 완성 |
 | **isDesignFilled** | `syllabus.isNotEmpty` | 커리큘럼(Syllabus) 생성 완료 |
-| **isResourceReady** | `learningResources.isNotEmpty && instructionalTheories.isNotEmpty` | 웹 검색 자료 수집 완료 |
+| **isResourceReady** | `learningResources.isNotEmpty && instructionalTheories.isNotEmpty` | Wikidata + RAG 리소스 수집 완료 |
 | **isDesigning** | 수동 설정, true일 경우에 입력창 disabled | 커리큘럼 생성 중 (중복 방지용) |
 | **showDesignReady** | 수동 설정 | 설계 완료 UI 표시 플래그 |
 | **isCourseCompleted** | 수동 설정 | 학습 완료 여부 (새 학습 시작 판단용) |
 
-### 새로 추가되는 필드 설명
+### 데이터 모델 상세 설명
 
-#### WebResourceCache
+#### ResourceCache (리소스 캐시)
 ```dart
-class WebResourceCache {
+class ResourceCache {
   final String? subject;                          // 검색한 주제
-  final List<LearningResource> learningResources; // 수집된 학습 자료
-  final List<InstructionalTheory> instructionalTheories; // 적합한 교수설계이론
+  final String sourceId;                          // 캐시 식별자
+  final List<LearningResource> learningResources; // Wikidata에서 수집된 학습 자료
+  final List<InstructionalTheory> instructionalTheories; // 교수설계이론 (2단계 변환)
   final DateTime? lastFetchedAt;                  // 마지막 검색 시간
 
   bool get isResourceReady =>
@@ -262,75 +266,92 @@ class WebResourceCache {
 }
 ```
 
+**instructionalTheories의 2단계 변환:**
+1. **RAG Fetch 직후**: PDF에서 추출한 이론들 (10개) → applicability 없음
+2. **Designer 실행 후**: 실제 적용한 이론들 (최대 3개) → applicability 추가 → **덮어쓰기**
+
 #### LearningResource (학습 자료)
 ```dart
 class LearningResource {
-  final String title;        // 자료 제목
-  final String url;          // 자료 URL
-  final String summary;      // 자료 요약
-  final String resourceType; // 자료 유형 (documentation, tutorial, article, video)
+  final String title;        // 자료 제목 (예: "Machine learning")
+  final String url;          // 자료 URL (예: Wikidata 링크)
+  final String summary;      // 자료 요약 (Wikidata description)
+  final String resourceType; // 자료 유형 (예: "wikidata_concept")
 }
 ```
 
 #### InstructionalTheory (교수설계이론)
 ```dart
 class InstructionalTheory {
-  final String theoryName;   // 이론 이름 (예: Scaffolding, Mastery Learning)
-  final String description;  // 이론 설명
-  final String applicability; // 해당 주제에 적용 가능한 이유
+  final String theoryName;             // 이론 이름 (예: Scaffolding, Mastery Learning)
+  final String description;            // 이론 설명 (LLM이 재해석한 내용)
+  final String applicability;          // 이 커리큘럼에 어떻게 적용했는지 (SyllabusDesigner가 생성)
+  final List<SourceChunk>? rawChunks;  // RAG PDF 원본 chunk들
 }
 ```
 
-#### InstructionalDesign (교수설계) - v2.0 개선
+**InstructionalTheory의 2단계 변환:**
+1. **RAG 단계 (입력)**: PDF에서 추출한 이론들 → `rawChunks` 포함, `applicability`는 비어있거나 일반적 설명
+2. **Designer 단계 (출력)**: 실제 적용한 이론들만 선택 (최대 3개) → `applicability`에 **"이 커리큘럼에 어떻게 적용했는지"** 구체적 설명 추가
+
+#### SourceChunk (RAG 원본 청크)
+```dart
+class SourceChunk {
+  final int pageNumber;        // PDF 페이지 번호
+  final String? sectionHeader; // 섹션 제목 (nullable)
+  final String content;        // 원문 내용
+}
+```
+
+#### InstructionalDesign (교수설계)
 ```dart
 class InstructionalDesign {
-  final LearnerLevel targetLevel;                       // 이 커리큘럼의 대상 level
-  final List<Step> syllabus;                            // 학습 단계들
-  final List<InstructionalTheory> selectedTheories;     // 선택되고 적용된 교수설계 이론
-  final String pedagogicalRationale;                    // 왜 이 이론들을 선택했는지
+  final List<Step> syllabus;  // 학습 단계들
 
   bool get isDesignFilled => syllabus.isNotEmpty;
   int get totalSteps => syllabus.length;
 }
 ```
 
-#### Step (학습 단계) - v2.0 개선
+#### Step (학습 단계)
 ```dart
 class Step {
-  final int step;                            // 단계 번호
-  final String topic;                        // 주제
-  final String objective;                    // 학습 목표 (targetLevel에 맞게 설정됨)
-
-  // v2.0에서 추가되는 필드들
-  final List<String> keyPoints;              // 핵심 학습 포인트 (targetLevel에 맞는 깊이)
-  final List<LearningResource> resources;    // 이 단계에 필요한 학습 자료
-  final String recommendedApproach;          // 이 단계에 권장되는 교수법
-                                             // 예: "Scaffolding - 이전 단계 복습 후 새 개념 도입"
+  final int step;          // 단계 번호
+  final String topic;      // 주제
+  final String objective;  // 학습 목표
 }
 ```
 
 #### 역할 분리: Syllabus Designer vs Tutor Agent
 
 **Syllabus Designer의 역할 (설계):**
-1. `subject` + `goal` + `level` 분석
-2. `WebResourceCache`에서 교수설계 이론 후보 조회
-3. `targetLevel`에 맞는 교수설계 이론 선택 → `selectedTheories`
-4. 선택한 이론에 기반하여 커리큘럼 설계
-5. 각 `Step`에 `recommendedApproach` 명시
+1. **입력**:
+   - `LearnerProfile`: subject, goal, level, tonePreference
+   - `ResourceCache.learningResources`: Wikidata 학습 자료
+   - `ResourceCache.instructionalTheories`: RAG에서 추출한 이론들 (참고용)
+2. **처리**:
+   - 커리큘럼 설계 (syllabus 생성)
+   - RAG 이론 중 실제 적용한 이론만 선택 (최대 3개)
+   - 각 이론에 `applicability` 설명 작성 (이 커리큘럼에 어떻게 적용했는지)
+3. **출력**:
+   - `InstructionalDesign.syllabus`: 학습 단계 (Step 리스트)
+   - `ResourceCache.instructionalTheories`: **덮어쓰기** → 적용된 이론만 남김
 
 **Tutor Agent의 역할 (실행):**
 - **입력 정보**:
-  - `InstructionalDesign.selectedTheories`: 적용된 교수설계 이론
-  - `Step.recommendedApproach`: 단계별 권장 교수법
-  - `LearnerProfile.tonePreference`: 전달 스타일만
-- **동작**: 설계된 교수법대로 실행, 임의 판단 없음
-- **tone만 조정**: 같은 내용을 어떤 말투로 전달할지
+  - `ResourceCache.learningResources`: Wikidata 학습 자료 (요약 + URL)
+  - `ResourceCache.instructionalTheories`: **Designer가 선택한** 적용된 이론 (이름 + applicability)
+  - `InstructionalDesign.syllabus`: 학습 로드맵
+  - `LearnerProfile.tonePreference`: 전달 스타일
+- **동작**: 설계된 커리큘럼대로 실행, 리소스 참고
+- **tone 조정**: 같은 내용을 어떤 말투로 전달할지
 
 **이 접근의 장점:**
-1. **명확한 책임 분리**: Designer는 설계, Tutor는 실행만
-2. **일관성**: 수업 중 교수법이 임의로 바뀌지 않음
-3. **Token 효율**: Tutor는 `WebResourceCache` 접근 불필요, `InstructionalDesign`만 참조
-4. **Stateless 원칙**: LLM은 생성만, 판단은 Designer가
+1. **명확한 책임 분리**: Designer는 설계 + 이론 선택, Tutor는 실행 + 리소스 참고
+2. **일관성**: 커리큘럼은 고정, Tutor는 실시간으로 리소스 활용
+3. **Token 효율**: Tutor는 요약된 리소스만 참고 (Wikidata summary, 적용된 이론 이름)
+4. **Transparency**: 사용자가 "원문 보기"로 RAG chunk 확인 가능
+5. **이론 필터링**: Designer가 10개 RAG 이론 → 3개 적용 이론으로 압축
 
 ---
 
@@ -460,13 +481,19 @@ v2.0 - subject/goal/level 변경:
 
 ## 주요 특징
 
-### 백그라운드 Web Search (새로 추가 예정)
+### 백그라운드 리소스 수집 (Wikidata + RAG)
 - **실행 시점**: Analyst Agent가 `subject`(학습 주제)를 추출하는 즉시
 - **병렬 처리**: 사용자 응답과 병렬로 실행되어 대기 시간 최소화
 - **수집 데이터**:
-  - 학습 자료 (관련 문서, 튜토리얼 등)
-  - 적합한 교수설계이론 (주제별 최적 교수법)
-- **활용**: Syllabus Designer가 커리큘럼 생성 시 캐시된 자료 활용
+  - **Wikidata**: 주제 개념 정보 (label, description, URL)
+  - **RAG (PDF)**: 교수설계 이론 chunk들 (content, pageNumber, sectionHeader)
+- **활용**:
+  - **Syllabus Designer**:
+    1. 입력으로 RAG theories (참고용 10개) 받음
+    2. 커리큘럼 생성 + 실제 적용한 이론 선택 (최대 3개)
+    3. 선택된 이론만 `applicability` 추가하여 ResourceCache에 덮어쓰기
+  - **Tutor Agent**: 튜터링 시 Wikidata 요약과 **Designer가 선택한** 이론 참고
+- **Transparency**: 사용자는 "목차 보기 > 적용된 교수설계론 > 원문 보기"로 RAG chunk 확인 가능
 
 ### 노드 타입 설명
 - 🔴 **빨간 다이아몬드**: 의사결정 노드 (조건 분기)

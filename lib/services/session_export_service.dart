@@ -9,8 +9,13 @@ import '../models/state_change_event.dart';
 
 /// 채팅 세션을 JSON 파일로 내보내는 서비스
 ///
-/// 세션의 메시지와 상태 변화 이벤트를 시간순으로 정렬한 타임라인을 생성하고,
-/// 브라우저를 통해 다운로드할 수 있도록 한다.
+/// Version 2.0: 간소화된 타임라인 형식
+/// - 학생 메시지 (student)
+/// - 튜터 메시지 (tutor)
+/// - 프로필 업데이트 (profile): subject, goal, level, tonePreference 변경
+/// - 학습 플랜 (syllabus): 커리큘럼 + 교수설계 이론
+///
+/// Tutor agent가 참조하는 학습 상태 데이터를 시간순으로 정렬하여 브라우저를 통해 다운로드한다.
 class SessionExportService {
   /// 세션을 JSON 파일로 내보내고 브라우저 다운로드를 트리거한다.
   Future<void> exportSession(
@@ -32,52 +37,73 @@ class SessionExportService {
     LearningState finalState,
   ) {
     return {
-      'exportVersion': '1.0',
+      'exportVersion': '2.0',
       'exportedAt': DateTime.now().toIso8601String(),
       'session': {
         'id': session.id,
         'title': session.title,
         'createdAt': session.createdAt.toIso8601String(),
       },
-      'timeline': _buildTimeline(session.messages, session.stateChanges),
-      'finalState': {
-        'learnerProfile': finalState.learnerProfile.toJson(),
-        'instructionalDesign': finalState.instructionalDesign.toJson(),
-        'isDesigning': finalState.isDesigning,
-        'isCourseCompleted': finalState.isCourseCompleted,
-        'updatedAt': finalState.updatedAt.toIso8601String(),
-      },
+      'timeline': _buildSimplifiedTimeline(session.messages, session.stateChanges),
     };
   }
 
-  /// 메시지와 상태 변화 이벤트를 시간순으로 정렬한 타임라인을 생성한다.
-  List<Map<String, dynamic>> _buildTimeline(
+  /// 간소화된 타임라인 생성 (학생, 튜터, 학습 상태만 포함)
+  ///
+  /// 포함되는 항목:
+  /// - student: 학생 메시지 (MessageRole.user)
+  /// - tutor: 튜터 메시지 (MessageRole.model)
+  /// - profile: 프로필 업데이트 (StateChangeType.profileUpdated)
+  /// - syllabus: 학습 플랜 업데이트 + 교수설계 이론 (StateChangeType.syllabusGenerated)
+  List<Map<String, dynamic>> _buildSimplifiedTimeline(
     List<Message> messages,
     List<StateChangeEvent> stateChanges,
   ) {
     final timeline = <Map<String, dynamic>>[];
 
-    // 메시지를 타임라인 엔트리로 변환
+    // 학생/튜터 메시지만 추가
     for (final message in messages) {
-      timeline.add({
-        'type': 'message',
-        'timestamp': message.timestamp.toIso8601String(),
-        'role': message.role.name,
-        'content': message.content,
-      });
+      if (message.role == MessageRole.user) {
+        timeline.add({
+          'type': 'student',
+          'timestamp': message.timestamp.toIso8601String(),
+          'content': message.content,
+        });
+      } else if (message.role == MessageRole.model) {
+        timeline.add({
+          'type': 'tutor',
+          'timestamp': message.timestamp.toIso8601String(),
+          'content': message.content,
+        });
+      }
+      // MessageRole.system 제외
     }
 
-    // 상태 변화를 타임라인 엔트리로 변환
+    // 학습 상태 업데이트 추가
     for (final event in stateChanges) {
-      timeline.add({
-        'type': 'stateChange',
-        'timestamp': event.timestamp.toIso8601String(),
-        'changeType': event.type.name,
-        'changes': event.changes,
-      });
+      if (event.type == StateChangeType.profileUpdated) {
+        // Profile 변경 (subject, goal, level, tonePreference)
+        timeline.add({
+          'type': 'profile',
+          'timestamp': event.timestamp.toIso8601String(),
+          'profile': event.changes,
+        });
+      } else if (event.type == StateChangeType.syllabusGenerated) {
+        // Syllabus 생성 + ResourceCache (theories)
+        final steps = event.changes['steps'] as List?;
+        if (steps != null && steps.isNotEmpty) {
+          timeline.add({
+            'type': 'syllabus',
+            'timestamp': event.timestamp.toIso8601String(),
+            'syllabus': steps,
+            'theories': event.changes['theories'],
+          });
+        }
+      }
+      // 다른 StateChangeType 제외
     }
 
-    // 타임스탬프 기준으로 정렬
+    // 시간순 정렬
     timeline.sort((a, b) {
       final timestampA = DateTime.parse(a['timestamp'] as String);
       final timestampB = DateTime.parse(b['timestamp'] as String);

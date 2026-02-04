@@ -1,3 +1,13 @@
+# /// script
+# dependencies = [
+#     "flask==3.1.0",
+#     "flask-cors==5.0.0",
+#     "faiss-cpu==1.9.0",
+#     "google-cloud-aiplatform==1.75.0",
+#     "numpy==2.2.3",
+#     "requests",
+# ]
+# ///
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import faiss

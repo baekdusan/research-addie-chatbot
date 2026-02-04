@@ -28,22 +28,50 @@ class LearningResource {
       );
 }
 
+// SourceChunk: RAG에서 가져온 원본 chunk 메타데이터
+class SourceChunk {
+  final int pageNumber;
+  final String? sectionHeader;
+  final String content;
+
+  SourceChunk({
+    required this.pageNumber,
+    this.sectionHeader,
+    required this.content,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'pageNumber': pageNumber,
+        'sectionHeader': sectionHeader,
+        'content': content,
+      };
+
+  factory SourceChunk.fromJson(Map<String, dynamic> json) => SourceChunk(
+        pageNumber: json['pageNumber'] as int,
+        sectionHeader: json['sectionHeader'] as String?,
+        content: json['content'] as String,
+      );
+}
+
 // InstructionalTheory: PDF RAG에서 가져온 교수설계 이론
 class InstructionalTheory {
   final String theoryName;
   final String description;
   final String applicability;
+  final List<SourceChunk>? rawChunks;
 
   InstructionalTheory({
     required this.theoryName,
     required this.description,
     required this.applicability,
+    this.rawChunks,
   });
 
   Map<String, dynamic> toJson() => {
         'theoryName': theoryName,
         'description': description,
         'applicability': applicability,
+        'rawChunks': rawChunks?.map((c) => c.toJson()).toList(),
       };
 
   factory InstructionalTheory.fromJson(Map<String, dynamic> json) =>
@@ -51,6 +79,9 @@ class InstructionalTheory {
         theoryName: json['theoryName'],
         description: json['description'],
         applicability: json['applicability'],
+        rawChunks: (json['rawChunks'] as List?)
+            ?.map((c) => SourceChunk.fromJson(c as Map<String, dynamic>))
+            .toList(),
       );
 }
 
