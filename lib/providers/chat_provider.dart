@@ -13,6 +13,9 @@ import '../services/intent_classifier_service.dart';
 import '../services/conversational_agent_service.dart';
 import '../services/syllabus_designer_service.dart';
 import '../services/session_export_service.dart';
+import '../services/wikidata_client.dart';
+import '../services/rag_service.dart';
+import '../models/resource_cache.dart';
 
 part 'chat_provider.g.dart';
 
@@ -21,7 +24,7 @@ part 'chat_provider.g.dart';
 /// `keepAlive: true` 설정으로 앱 생명주기 동안 인스턴스가 유지되어
 /// 불필요한 재생성을 방지하고 연결 상태를 보존한다.
 @Riverpod(keepAlive: true)
-GeminiService geminiService(GeminiServiceRef ref) {
+GeminiService geminiService(Ref ref) {
   return GeminiService();
 }
 
@@ -29,9 +32,7 @@ GeminiService geminiService(GeminiServiceRef ref) {
 ///
 /// 사용자 발화가 "수업 내(inClass)" vs "수업 외(outOfClass)"인지 분류합니다.
 @Riverpod(keepAlive: true)
-IntentClassifierService intentClassifierService(
-  IntentClassifierServiceRef ref,
-) {
+IntentClassifierService intentClassifierService(Ref ref) {
   return IntentClassifierService();
 }
 
@@ -39,9 +40,7 @@ IntentClassifierService intentClassifierService(
 ///
 /// Analyst/Tutor/Feedback 세 가지 모드의 프롬프트와 실행을 담당합니다.
 @Riverpod(keepAlive: true)
-ConversationalAgentService conversationalAgentService(
-  ConversationalAgentServiceRef ref,
-) {
+ConversationalAgentService conversationalAgentService(Ref ref) {
   return ConversationalAgentService();
 }
 
@@ -49,9 +48,7 @@ ConversationalAgentService conversationalAgentService(
 ///
 /// 학습자 프로파일 기반으로 ADDIE 모델 커리큘럼을 생성합니다.
 @Riverpod(keepAlive: true)
-SyllabusDesignerService syllabusDesignerService(
-  SyllabusDesignerServiceRef ref,
-) {
+SyllabusDesignerService syllabusDesignerService(Ref ref) {
   return SyllabusDesignerService();
 }
 
@@ -59,10 +56,24 @@ SyllabusDesignerService syllabusDesignerService(
 ///
 /// 채팅 세션과 상태 변화를 JSON 파일로 내보냅니다.
 @Riverpod(keepAlive: true)
-SessionExportService sessionExportService(
-  SessionExportServiceRef ref,
-) {
+SessionExportService sessionExportService(Ref ref) {
   return SessionExportService();
+}
+
+/// [WikidataClient]의 싱글톤 인스턴스 제공.
+///
+/// 학습 주제에 대한 개념 정보를 Wikidata에서 검색합니다.
+@Riverpod(keepAlive: true)
+WikidataClient wikidataClient(Ref ref) {
+  return WikidataClient();
+}
+
+/// [RagService]의 싱글톤 인스턴스 제공.
+///
+/// 교수설계 PDF에서 관련 이론을 벡터 검색합니다.
+@Riverpod(keepAlive: true)
+RagService ragService(Ref ref) {
+  return RagService();
 }
 
 /// 앱의 모든 채팅 세션을 관리하는 상태 노티파이어.
@@ -127,7 +138,7 @@ class ActiveSessionId extends _$ActiveSessionId {
 /// UI에서 현재 대화 내용을 표시할 때 `ref.watch`로 구독하며,
 /// 활성 ID가 없거나 해당 세션이 없으면 null을 반환한다.
 @riverpod
-ChatSession? activeSession(ActiveSessionRef ref) {
+ChatSession? activeSession(Ref ref) {
   final sessions = ref.watch(chatSessionsProvider);
   final activeId = ref.watch(activeSessionIdProvider);
   if (activeId == null) return null;
@@ -212,7 +223,7 @@ class ChatController extends _$ChatController {
     // ============================================================
     // 2. 현재 학습 상태 조회 및 로깅
     // ============================================================
-    final learning = ref.read(learningStateNotifierProvider);
+    final learning = ref.read(learningStateProvider);
     _log('turn.start', {
       'turn': _turnCounter,
       'text': text,
@@ -289,7 +300,7 @@ class ChatController extends _$ChatController {
         orElse: () => throw Exception('세션을 찾을 수 없습니다.'),
       );
 
-      final learningState = ref.read(learningStateNotifierProvider);
+      final learningState = ref.read(learningStateProvider);
       final exportService = ref.read(sessionExportServiceProvider);
 
       await exportService.exportSession(session, learningState);
@@ -362,7 +373,7 @@ class ChatController extends _$ChatController {
       // 3. 추출된 정보로 학습 상태 업데이트
       // ============================================================
       await ref
-          .read(learningStateNotifierProvider.notifier)
+          .read(learningStateProvider.notifier)
           .updateFromExtractedInfo(
             subject: result.subject,
             goal: result.goal,
@@ -370,7 +381,7 @@ class ChatController extends _$ChatController {
             tonePreference: result.tonePreference,
           );
 
-      final updated = ref.read(learningStateNotifierProvider);
+      final updated = ref.read(learningStateProvider);
 
       // ============================================================
       // 4. 프로필 변경 사항 추적 (디버깅/분석용)
@@ -391,7 +402,14 @@ class ChatController extends _$ChatController {
       }
 
       // ============================================================
-      // 5. 필수 정보 완성 체크 → 자동으로 커리큘럼 생성 시작
+      // 5. Subject 확정 시 → Wikidata/RAG 검색하여 캐시 저장
+      // ============================================================
+      if (result.subject != null && updated.learnerProfile.subject != null) {
+        await _fetchAndCacheResources(updated.learnerProfile.subject!);
+      }
+
+      // ============================================================
+      // 6. 필수 정보 완성 체크 → 자동으로 커리큘럼 생성 시작
       // ============================================================
       final wasMandatory = previous.learnerProfile.isLearnerProfileFilled;
       final shouldTriggerDesign =
@@ -429,7 +447,7 @@ class ChatController extends _$ChatController {
   /// - 실시간 스트리밍으로 사용자 경험 향상
   /// - 대화 히스토리를 컨텍스트로 전달
   Future<void> _runTutorFlow(String sessionId, String userText) async {
-    final learning = ref.read(learningStateNotifierProvider);
+    final learning = ref.read(learningStateProvider);
     final agent = ref.read(conversationalAgentServiceProvider);
     String? assistantId;
     try {
@@ -500,9 +518,9 @@ class ChatController extends _$ChatController {
       // ============================================================
       // 6. designReady 플래그 정리 (설계 완료 안내 숨김)
       // ============================================================
-      final latest = ref.read(learningStateNotifierProvider);
+      final latest = ref.read(learningStateProvider);
       if (latest.showDesignReady) {
-        await ref.read(learningStateNotifierProvider.notifier).setDesignReady(false);
+        await ref.read(learningStateProvider.notifier).setDesignReady(false);
       }
     } catch (e) {
       // ============================================================
@@ -542,23 +560,30 @@ class ChatController extends _$ChatController {
   /// - Intent Classifier가 "outOfClass" 판단 (수업 외 발화)
   ///
   /// 처리 흐름:
-  /// 1. runFeedback 호출 → JSON 추출 (비스트리밍)
-  /// 2. 명시적 변경 요청 시 → 프로파일 업데이트 (level, tone)
-  /// 3. 재설계 필요 + 명시적 요청 → 커리큘럼 재생성
-  /// 4. 단순 피드백 → 응답만 표시
+  /// 1. 대화 히스토리 구성 (최근 6개)
+  /// 2. runFeedback 호출 → JSON 추출 (비스트리밍)
+  /// 3. 명시적 변경 요청 시 → 프로파일 업데이트 (level, tone)
+  /// 4. 재설계 필요 + 명시적 요청 → 커리큘럼 재생성
+  /// 5. 단순 피드백 → 응답만 표시
   ///
   /// 특징:
+  /// - 대화 히스토리를 컨텍스트로 전달하여 맥락 파악
   /// - explicitChange=true일 때만 상태 변경 (추측 방지)
   /// - needs_redesign + explicitChange → 커리큘럼 재생성
   /// - 단순 잡담은 무시 (needs_redesign=false)
   Future<void> _runFeedbackFlow(String sessionId, String userText) async {
-    final learning = ref.read(learningStateNotifierProvider);
+    final learning = ref.read(learningStateProvider);
     final agent = ref.read(conversationalAgentServiceProvider);
     try {
       // ============================================================
-      // 1. Feedback Agent 호출: 피드백 분석 (비스트리밍, JSON)
+      // 1. 대화 히스토리 구성
       // ============================================================
-      final result = await agent.runFeedback(learning, userText);
+      final history = _buildHistory(sessionId, userText, limit: 6);
+
+      // ============================================================
+      // 2. Feedback Agent 호출: 피드백 분석 (비스트리밍, JSON)
+      // ============================================================
+      final result = await agent.runFeedback(learning, userText, history);
       _appendAssistantMessage(sessionId, result.response);
       _log('feedback.result', {
         'turn': _turnCounter,
@@ -572,7 +597,7 @@ class ChatController extends _$ChatController {
       // ============================================================
       if (result.explicitChange) {
         await ref
-            .read(learningStateNotifierProvider.notifier)
+            .read(learningStateProvider.notifier)
             .updateFromExtractedInfo(
               level: result.level,
               tonePreference: result.tonePreference,
@@ -637,7 +662,7 @@ class ChatController extends _$ChatController {
     required bool isRedesign,
     String? redesignRequest,
   }) {
-    final learning = ref.read(learningStateNotifierProvider);
+    final learning = ref.read(learningStateProvider);
 
     // ============================================================
     // 1. 중복 방지: 이미 설계 중이면 무시
@@ -653,7 +678,7 @@ class ChatController extends _$ChatController {
     // ============================================================
     // 2. 설계 시작 플래그 설정
     // ============================================================
-    unawaited(ref.read(learningStateNotifierProvider.notifier).setDesigning(true));
+    unawaited(ref.read(learningStateProvider.notifier).setDesigning(true));
 
     // 커리큘럼 생성 시작 추적
     _recordStateChange(
@@ -671,21 +696,39 @@ class ChatController extends _$ChatController {
     Future(() async {
       try {
         final designer = ref.read(syllabusDesignerServiceProvider);
-        final syllabus = await designer.generate(
+        final result = await designer.generate(
           learning.learnerProfile,
+          resourceCache: learning.resourceCache,
           redesignRequest: redesignRequest,
         );
+
+        final syllabus = result.syllabus;
+        final theories = result.theories;
+
         _log('design.generated', {
           'turn': _turnCounter,
           'steps': syllabus.length,
           'topics': syllabus.map((step) => step.topic).toList(),
+          'theories': theories.map((t) => t.theoryName).toList(),
         });
 
         // ============================================================
-        // 4. 생성된 커리큘럼으로 상태 업데이트
+        // 4. 생성된 커리큘럼과 이론으로 상태 업데이트
         // ============================================================
+
+        // 4-1. theories를 resourceCache에 업데이트
+        if (theories.isNotEmpty) {
+          final updatedCache = learning.resourceCache.copyWith(
+            instructionalTheories: theories,
+          );
+          await ref
+              .read(learningStateProvider.notifier)
+              .setResourceCache(updatedCache);
+        }
+
+        // 4-2. syllabus 업데이트
         await ref
-            .read(learningStateNotifierProvider.notifier)
+            .read(learningStateProvider.notifier)
             .setSyllabus(syllabus);
 
         // 커리큘럼 생성 완료 추적
@@ -709,7 +752,7 @@ class ChatController extends _$ChatController {
       } catch (e) {
         _log('design.error', {'error': e.toString()});
         await ref
-            .read(learningStateNotifierProvider.notifier)
+            .read(learningStateProvider.notifier)
             .setDesigning(false);
         _appendSystemMessage(sessionId, '로드맵 생성에 실패했어요. 잠시 후 다시 시도해 주세요.');
       }
@@ -827,6 +870,99 @@ class ChatController extends _$ChatController {
         .where((m) => m.role == MessageRole.model)
         .toList();
     return tutorMessages.isEmpty ? null : tutorMessages.last.content;
+  }
+
+  /// ============================================================
+  /// Helper: Wikidata/RAG 검색 및 캐시 저장
+  /// ============================================================
+  ///
+  /// 역할: subject가 확정되면 관련 리소스를 검색하여 캐시에 저장합니다.
+  ///
+  /// 검색 대상:
+  /// 1. Wikidata: 주제에 대한 개념 정보
+  /// 2. RAG: 교수설계 PDF에서 관련 청크 (theories는 SyllabusDesigner가 추출)
+  ///
+  /// Graceful Degradation:
+  /// - 검색 실패 시에도 앱은 정상 동작 (빈 캐시로 진행)
+  Future<void> _fetchAndCacheResources(String subject) async {
+    _log('resource.fetch.start', {'subject': subject});
+
+    final wikidataClient = ref.read(wikidataClientProvider);
+    final ragService = ref.read(ragServiceProvider);
+
+    // 병렬로 검색 실행
+    final results = await Future.wait([
+      _fetchWikidataResources(wikidataClient, subject),
+      _fetchRagChunks(ragService),
+    ]);
+
+    final learningResources = results[0] as List<LearningResource>;
+    final ragChunks = results[1] as List<RetrievedChunk>;
+
+    // RAG 청크를 InstructionalTheory 형태로 임시 저장
+    // (실제 정제된 theories는 SyllabusDesigner가 생성)
+    final instructionalTheories = ragChunks
+        .map((chunk) => InstructionalTheory(
+              theoryName: chunk.sectionHeader ?? 'Theory',
+              description: chunk.content,
+              applicability: '',
+            ))
+        .toList();
+
+    // 캐시 저장
+    final cache = ResourceCache(
+      subject: subject,
+      sourceId: '${subject}_${DateTime.now().millisecondsSinceEpoch}',
+      learningResources: learningResources,
+      instructionalTheories: instructionalTheories,
+      lastFetchedAt: DateTime.now(),
+    );
+
+    await ref.read(learningStateProvider.notifier).setResourceCache(cache);
+
+    _log('resource.fetch.complete', {
+      'subject': subject,
+      'learningResources': learningResources.length,
+      'ragChunks': ragChunks.length,
+    });
+  }
+
+  /// Wikidata에서 주제 관련 개념 정보 검색
+  Future<List<LearningResource>> _fetchWikidataResources(
+    WikidataClient client,
+    String subject,
+  ) async {
+    try {
+      final entity = await client.fetchByTopic(subject);
+      if (entity == null) return [];
+
+      return [
+        LearningResource(
+          title: entity.label,
+          url: 'https://www.wikidata.org/wiki/${entity.id}',
+          summary: entity.description,
+          resourceType: 'wikidata_concept',
+        ),
+      ];
+    } catch (e) {
+      _log('wikidata.error', {'error': e.toString()});
+      return [];
+    }
+  }
+
+  /// RAG에서 교수설계 이론 청크 검색
+  /// (실제 이론 추출은 SyllabusDesigner가 수행)
+  Future<List<RetrievedChunk>> _fetchRagChunks(RagService service) async {
+    try {
+      final chunks = await service.retrieve(
+        'instructional design theory learning method teaching strategy pedagogy',
+        topK: 5,
+      );
+      return chunks;
+    } catch (e) {
+      _log('rag.error', {'error': e.toString()});
+      return [];
+    }
   }
 
   /// ============================================================

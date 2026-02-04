@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/chat_session.dart';
 import '../providers/chat_provider.dart';
 import '../providers/learning_state_provider.dart';
 import '../models/instructional_design.dart' as id;
+import '../models/learner_profile.dart';
 import '../models/learning_state.dart';
+import '../models/resource_cache.dart';
 import 'message_bubble.dart';
 import 'chat_input.dart';
 
@@ -46,7 +49,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(activeSessionProvider);
-    final learningState = ref.watch(learningStateNotifierProvider);
+    final learningState = ref.watch(learningStateProvider);
 
     // activeSessionProvider 변경을 감지하여 자동 스크롤을 트리거한다.
     // 새 메시지가 추가되거나 마지막 메시지가 스트리밍 중이면 하단으로 스크롤한다.
@@ -63,7 +66,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
     return Column(
       children: [
         if (learningState.instructionalDesign.syllabus.isNotEmpty)
-          _buildSyllabusHeader(context, learningState.instructionalDesign),
+          _buildSyllabusHeader(context, learningState),
         _buildStatusBanner(context, learningState),
         Expanded(
           child: session == null || session.messages.isEmpty
@@ -141,10 +144,10 @@ class _ChatViewState extends ConsumerState<ChatView> {
 
   Widget _buildSyllabusHeader(
     BuildContext context,
-    id.InstructionalDesign design,
+    LearningState learningState,
   ) {
     final theme = Theme.of(context);
-    final totalSteps = design.syllabus.length;
+    final totalSteps = learningState.instructionalDesign.syllabus.length;
 
     return Container(
       width: double.infinity,
@@ -178,7 +181,7 @@ class _ChatViewState extends ConsumerState<ChatView> {
                 ),
                 const SizedBox(width: 8),
                 TextButton.icon(
-                  onPressed: () => _showSyllabusModal(context, design),
+                  onPressed: () => _showSyllabusModal(context, learningState),
                   style: TextButton.styleFrom(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
@@ -198,18 +201,23 @@ class _ChatViewState extends ConsumerState<ChatView> {
     );
   }
 
-  void _showSyllabusModal(BuildContext context, id.InstructionalDesign design) {
+  void _showSyllabusModal(BuildContext context, LearningState learningState) {
+    final design = learningState.instructionalDesign;
+    final profile = learningState.learnerProfile;
+    final resourceCache = learningState.resourceCache;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       builder: (context) {
         return DraggableScrollableSheet(
-          initialChildSize: 0.6,
+          initialChildSize: 0.7,
           minChildSize: 0.4,
           maxChildSize: 0.9,
           expand: false,
           builder: (context, scrollController) {
+            final theme = Theme.of(context);
             return Column(
               children: [
                 Padding(
@@ -218,12 +226,12 @@ class _ChatViewState extends ConsumerState<ChatView> {
                     children: [
                       Icon(
                         Icons.map,
-                        color: Theme.of(context).colorScheme.primary,
+                        color: theme.colorScheme.primary,
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        '학습 로드맵',
-                        style: Theme.of(context).textTheme.titleLarge,
+                        '학습 플랜',
+                        style: theme.textTheme.titleLarge,
                       ),
                       const Spacer(),
                       IconButton(
@@ -235,54 +243,44 @@ class _ChatViewState extends ConsumerState<ChatView> {
                 ),
                 const Divider(height: 1),
                 Expanded(
-                  child: ListView.separated(
+                  child: ListView(
                     controller: scrollController,
                     padding: const EdgeInsets.all(16),
-                    itemCount: design.syllabus.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) {
-                      final step = design.syllabus[index];
-                      final theme = Theme.of(context);
-
-                      return Container(
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.surface,
-                          border: Border.all(
-                            color: theme.colorScheme.outlineVariant,
-                          ),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor:
-                                theme.colorScheme.surfaceContainerHighest,
-                            foregroundColor: theme.colorScheme.onSurfaceVariant,
-                            child: Text(
-                              '${step.step}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          title: Text(
-                            step.topic,
-                            style: TextStyle(
-                              fontWeight: FontWeight.normal,
-                              color: theme.colorScheme.onSurface,
-                            ),
-                          ),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              step.objective,
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
+                    children: [
+                      // 학습 플랜 요약 섹션
+                      _buildPlanSummarySection(theme, profile, design),
+                      const SizedBox(height: 24),
+                      // 로드맵 섹션 헤더
+                      _buildSectionHeader(theme, Icons.route, '학습 로드맵'),
+                      const SizedBox(height: 12),
+                      // 로드맵 리스트
+                      ...design.syllabus.map((step) => Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _buildStepCard(theme, step),
+                          )),
+                      // 적용된 교수설계론 섹션
+                      if (resourceCache.instructionalTheories.isNotEmpty) ...[
+                        const SizedBox(height: 24),
+                        _buildSectionHeader(theme, Icons.psychology, '적용된 교수설계론'),
+                        const SizedBox(height: 12),
+                        ...resourceCache.instructionalTheories.map((theory) =>
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: _buildTheoryCard(theme, theory),
+                            )),
+                      ],
+                      // 참고 자료 섹션
+                      if (resourceCache.learningResources.isNotEmpty) ...[
+                        const SizedBox(height: 24),
+                        _buildSectionHeader(theme, Icons.link, '참고 자료'),
+                        const SizedBox(height: 12),
+                        ...resourceCache.learningResources.map((resource) =>
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: _buildResourceCard(theme, resource),
+                            )),
+                      ],
+                    ],
                   ),
                 ),
               ],
@@ -290,6 +288,424 @@ class _ChatViewState extends ConsumerState<ChatView> {
           },
         );
       },
+    );
+  }
+
+  Widget _buildSectionHeader(ThemeData theme, IconData icon, String title) {
+    return Row(
+      children: [
+        Icon(
+          icon,
+          size: 18,
+          color: theme.colorScheme.primary,
+        ),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTheoryCard(ThemeData theme, InstructionalTheory theory) {
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.tertiaryContainer.withValues(alpha: 0.3),
+        border: Border.all(
+          color: theme.colorScheme.tertiary.withValues(alpha: 0.3),
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        leading: Icon(
+          Icons.menu_book,
+          color: theme.colorScheme.tertiary,
+          size: 20,
+        ),
+        title: Text(
+          theory.theoryName,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+            color: theme.colorScheme.onSurface,
+          ),
+        ),
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  theory.description,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                if (theory.applicability.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.lightbulb_outline,
+                          size: 14,
+                          color: theme.colorScheme.tertiary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            theory.applicability,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResourceCard(ThemeData theme, LearningResource resource) {
+    final iconData = _getResourceIcon(resource.resourceType);
+    final typeLabel = _getResourceTypeLabel(resource.resourceType);
+    final hasUrl = resource.url.isNotEmpty;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant,
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ListTile(
+            leading: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.secondaryContainer,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                iconData,
+                color: theme.colorScheme.secondary,
+                size: 20,
+              ),
+            ),
+            title: Text(
+              resource.title,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w500,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    typeLabel,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.secondary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            trailing: hasUrl
+                ? IconButton(
+                    icon: Icon(
+                      Icons.open_in_new,
+                      size: 20,
+                      color: theme.colorScheme.primary,
+                    ),
+                    tooltip: '원문 보기',
+                    onPressed: () => _launchUrl(resource.url),
+                  )
+                : null,
+          ),
+          // 요약 정보
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    resource.summary,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  if (hasUrl) ...[
+                    const SizedBox(height: 8),
+                    InkWell(
+                      onTap: () => _launchUrl(resource.url),
+                      child: Text(
+                        resource.url,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.primary,
+                          decoration: TextDecoration.underline,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _launchUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  IconData _getResourceIcon(String resourceType) {
+    switch (resourceType) {
+      case 'wikidata_concept':
+        return Icons.public;
+      case 'openstax_chapter':
+        return Icons.book;
+      case 'openstax_exercise':
+        return Icons.quiz;
+      default:
+        return Icons.article;
+    }
+  }
+
+  String _getResourceTypeLabel(String resourceType) {
+    switch (resourceType) {
+      case 'wikidata_concept':
+        return 'Wikidata';
+      case 'openstax_chapter':
+        return 'OpenStax 교재';
+      case 'openstax_exercise':
+        return 'OpenStax 연습문제';
+      default:
+        return '참고자료';
+    }
+  }
+
+  Widget _buildPlanSummarySection(
+    ThemeData theme,
+    LearnerProfile profile,
+    id.InstructionalDesign design,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: theme.colorScheme.primary.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.info_outline,
+                size: 18,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '학습 정보',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildInfoRow(theme, '학습 주제', profile.subject ?? '-'),
+          const SizedBox(height: 12),
+          _buildInfoRow(theme, '학습 목표', profile.goal ?? '-'),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _buildInfoChip(
+                  theme,
+                  Icons.trending_up,
+                  '수준',
+                  _getLevelDisplayName(profile.level),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildInfoChip(
+                  theme,
+                  Icons.format_list_numbered,
+                  '총 단계',
+                  '${design.syllabus.length}단계',
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoRow(ThemeData theme, String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 72,
+          child: Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInfoChip(
+    ThemeData theme,
+    IconData icon,
+    String label,
+    String value,
+  ) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              Text(
+                value,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _getLevelDisplayName(LearnerLevel? level) {
+    switch (level) {
+      case LearnerLevel.beginner:
+        return '초급';
+      case LearnerLevel.intermediate:
+        return '중급';
+      case LearnerLevel.expert:
+        return '고급';
+      default:
+        return '-';
+    }
+  }
+
+  Widget _buildStepCard(ThemeData theme, id.Step step) {
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant,
+        ),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: theme.colorScheme.surfaceContainerHighest,
+          foregroundColor: theme.colorScheme.onSurfaceVariant,
+          child: Text(
+            '${step.step}',
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        title: Text(
+          step.topic,
+          style: TextStyle(
+            fontWeight: FontWeight.normal,
+            color: theme.colorScheme.onSurface,
+          ),
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            step.objective,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ),
     );
   }
 

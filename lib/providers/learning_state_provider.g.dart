@@ -6,22 +6,58 @@ part of 'learning_state_provider.dart';
 // RiverpodGenerator
 // **************************************************************************
 
-String _$learningStateNotifierHash() =>
-    r'c0359e0c0401c1f9886d8e9eac1ad36b577efe74';
+// GENERATED CODE - DO NOT MODIFY BY HAND
+// ignore_for_file: type=lint, type=warning
 
-/// See also [LearningStateNotifier].
 @ProviderFor(LearningStateNotifier)
-final learningStateNotifierProvider =
-    AutoDisposeNotifierProvider<LearningStateNotifier, LearningState>.internal(
-  LearningStateNotifier.new,
-  name: r'learningStateNotifierProvider',
-  debugGetCreateSourceHash: const bool.fromEnvironment('dart.vm.product')
-      ? null
-      : _$learningStateNotifierHash,
-  dependencies: null,
-  allTransitiveDependencies: null,
-);
+final learningStateProvider = LearningStateNotifierProvider._();
 
-typedef _$LearningStateNotifier = AutoDisposeNotifier<LearningState>;
-// ignore_for_file: type=lint
-// ignore_for_file: subtype_of_sealed_class, invalid_use_of_internal_member, invalid_use_of_visible_for_testing_member
+final class LearningStateNotifierProvider
+    extends $NotifierProvider<LearningStateNotifier, LearningState> {
+  LearningStateNotifierProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'learningStateProvider',
+        isAutoDispose: true,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$learningStateNotifierHash();
+
+  @$internal
+  @override
+  LearningStateNotifier create() => LearningStateNotifier();
+
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(LearningState value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<LearningState>(value),
+    );
+  }
+}
+
+String _$learningStateNotifierHash() =>
+    r'9645849c62c25a70b4fedbd1c09de3753b663c42';
+
+abstract class _$LearningStateNotifier extends $Notifier<LearningState> {
+  LearningState build();
+  @$mustCallSuper
+  @override
+  void runBuild() {
+    final ref = this.ref as $Ref<LearningState, LearningState>;
+    final element =
+        ref.element
+            as $ClassProviderElement<
+              AnyNotifier<LearningState, LearningState>,
+              LearningState,
+              Object?,
+              Object?
+            >;
+    element.handleCreate(ref, build);
+  }
+}
